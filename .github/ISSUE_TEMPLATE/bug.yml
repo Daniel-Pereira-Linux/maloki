@@ -1,0 +1,56 @@
+name: 🐛 Bug
+description: Algo deu errado ao usar o maloki ou ao ligar a imagem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por relatar! Quanto mais detalhes, mais rápido dá para corrigir.
+        **Achou um vazamento de dado pessoal ou segredo?** Não abra issue pública: veja o [SECURITY.md](../blob/main/SECURITY.md).
+  - type: input
+    id: distro
+    attributes:
+      label: Distribuição e versão
+      description: "Saída de: grep PRETTY_NAME /etc/os-release"
+      placeholder: Fedora Linux 44 (Workstation Edition)
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Versão do maloki
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: etapa
+    attributes:
+      label: Onde aconteceu?
+      options:
+        - Antes de começar (verificações, menus, --plano)
+        - Durante as etapas 1 a 9
+        - Ao ligar a imagem gerada
+        - Outro
+    validations:
+      required: true
+  - type: textarea
+    id: comando
+    attributes:
+      label: O que você rodou
+      render: shell
+      placeholder: sudo maloki --plano meu-plano.toml
+    validations:
+      required: true
+  - type: textarea
+    id: saida
+    attributes:
+      label: Saída do programa (o trecho do erro)
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: boot
+    attributes:
+      label: Se a imagem não ligou, o que aparece com -nographic
+      description: "qemu-system-x86_64 -enable-kvm -m 4G -drive file=SUA.qcow2,if=virtio -nographic"
+      render: text

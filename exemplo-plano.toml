@@ -1,0 +1,31 @@
+# Exemplo de plano para o modo automático (sem perguntas):
+#
+#   sudo ./maloki --plano exemplo-plano.toml
+#
+# Só "imagem" é obrigatório. O que faltar usa o valor padrão (entre parênteses).
+
+imagem = "template.qcow2"     # nome do arquivo gerado, na pasta atual
+# tamanho_gb = 40             # tamanho do disco da VM (sugestão automática)
+hostname = "template"         # nome da máquina na VM ("template")
+flatpak = true                # incluir os apps Flatpak do sistema (true)
+compactar = true              # arquivo menor, melhor para transportar (true)
+parar_servicos = true         # parar bancos de dados durante a cópia (true)
+sobrescrever = false          # substituir a imagem se ela já existir (false)
+
+# Root: sem senha_root e sem senha_root_hash = root BLOQUEADO (recomendado).
+# senha_root_hash = "$6$..."
+
+[[usuarios]]
+nome = "maria"
+# Prefira senha_hash: assim a senha não fica escrita no arquivo.
+# Gere o hash com:   openssl passwd -6
+senha_hash = "$6$Xb1q6t9wQ2$lql6zODeo3h9DY2FdlAWz8.4SgRPizKtqqIN0Mo9R8XhGUYcdAiVWhcglvoCKSjoqWXyKEJoOJQLNuab2kcoF0"   # = "troque-me"
+admin = true                  # pode usar sudo (false)
+trocar_senha = true           # obrigar a trocar a senha no 1º login (false)
+                              # (aqui é importante: a senha do exemplo é pública!)
+# chave_ssh = "~/.ssh/id_ed25519.pub"   # ou a chave colada entre aspas
+
+# Pode repetir o bloco [[usuarios]] para criar mais gente:
+# [[usuarios]]
+# nome = "joao"
+# senha = "troque-me"         # senha em texto (evite em arquivos compartilhados)

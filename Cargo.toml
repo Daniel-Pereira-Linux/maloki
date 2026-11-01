@@ -1,0 +1,23 @@
+[package]
+name = "maloki"
+version = "0.1.0"
+edition = "2024"
+description = "Transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Daniel-Pereira-Linux/maloki"
+homepage = "https://daniel-pereira-linux.github.io/maloki"
+keywords = ["qemu", "qcow2", "template", "linux", "vm"]
+categories = ["command-line-utilities", "virtualization"]
+
+[profile.release]
+strip = true          # binário menor (sem símbolos de depuração)
+lto = true            # otimiza o programa inteiro de uma vez
+codegen-units = 1
+
+[dependencies]
+ctrlc = "3.4"
+dialoguer = "0.11"
+pwhash = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

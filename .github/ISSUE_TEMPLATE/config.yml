@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Guia do código (para quem quer contribuir)
+    url: https://github.com/Daniel-Pereira-Linux/maloki/blob/main/GUIA-DO-CODIGO.md
+    about: Por onde ler, qual arquivo chama qual, receitas e padrões do projeto.
+  - name: 🔒 Falha de segurança (relato privado)
+    url: https://github.com/Daniel-Pereira-Linux/maloki/security/advisories/new
+    about: Vazamento de dado pessoal na imagem ou dano ao sistema. Não use issue pública.

@@ -1,0 +1,38 @@
+# Quando uma tag vX.Y.Z é enviada, compila o binário estático e publica no Releases.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  binario:
+    name: Binário estático x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Ferramentas para compilar com musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Compilar
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+      - name: Empacotar
+        run: |
+          mkdir -p dist/maloki
+          cp target/x86_64-unknown-linux-musl/release/maloki dist/maloki/
+          cp man/maloki.1 README.md LICENSE exemplo-plano.toml dist/maloki/
+          cd dist
+          tar -czf maloki-x86_64-linux.tar.gz maloki
+          sha256sum maloki-x86_64-linux.tar.gz > maloki-x86_64-linux.tar.gz.sha256
+      - name: Publicar no Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/maloki-x86_64-linux.tar.gz dist/maloki-x86_64-linux.tar.gz.sha256 --clobber

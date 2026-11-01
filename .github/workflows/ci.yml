@@ -1,0 +1,31 @@
+# Roda os testes a cada push e Pull Request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes:
+    name: cargo test + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Programas que os testes usam (rsync, sfdisk...)
+        run: sudo apt-get update && sudo apt-get install -y rsync fdisk
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Compilar
+        run: cargo build --locked
+      - name: Testes
+        run: cargo test --locked
+      - name: Clippy (sem avisos)
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Manpage válida
+        run: |
+          sudo apt-get install -y groff
+          LC_ALL=C.UTF-8 groff -k -man -Tutf8 -ww -z man/maloki.1 2>&1 | tee avisos.txt
+          test ! -s avisos.txt

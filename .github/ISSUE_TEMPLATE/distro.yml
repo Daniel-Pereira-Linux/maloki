@@ -1,0 +1,30 @@
+name: 🐧 Testei numa distro
+description: Conte como o maloki se saiu numa distribuição (funcionou ou não!)
+labels: ["teste de distro"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        É assim que a lista de distribuições suportadas cresce. Contar que **funcionou** ajuda tanto quanto contar que deu erro.
+  - type: input
+    id: distro
+    attributes:
+      label: Distribuição e versão
+      placeholder: Ubuntu 24.04.1 LTS
+    validations:
+      required: true
+  - type: checkboxes
+    id: resultado
+    attributes:
+      label: O que funcionou
+      options:
+        - label: A imagem foi criada sem erro
+        - label: Ligou em BIOS
+        - label: Ligou em UEFI
+        - label: Ligou com Secure Boot
+        - label: Consegui entrar com o usuário criado
+        - label: A rede funcionou (DHCP)
+  - type: textarea
+    id: detalhes
+    attributes:
+      label: Detalhes, erros ou observações

@@ -1,0 +1,318 @@
+.\" -*- coding: UTF-8 -*-
+.\" Manual do maloki. Para ver sem instalar:  man ./man/maloki.1
+.TH MALOKI 1 "novembro de 2026" "maloki 0.1.0" "Comandos do Usuário"
+.
+.SH NOME
+maloki \- transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais
+.
+.SH SINOPSE
+.SY "sudo maloki"
+.YS
+.SY "sudo maloki"
+.B \-\-plano
+.I arquivo.toml
+.YS
+.SY maloki
+.B \-\-simular
+.RB [ \-\-plano
+.IR arquivo.toml ]
+.YS
+.SY maloki
+.B \-\-ajuda
+.YS
+.
+.SH DESCRIÇÃO
+.B maloki
+faz uma "foto" do sistema Linux que está rodando e grava tudo num único
+arquivo de disco virtual no formato
+.BR qcow2 :
+um
+.IR template .
+.PP
+Vão para a imagem os programas instalados, as configurações do sistema e os
+serviços.
+.B Não
+vão: os arquivos pessoais
+.RI ( /home ,
+.IR /root ),
+os usuários existentes, senhas de Wi\-Fi, VPNs, chaves SSH do servidor, o
+.IR machine\-id ,
+logs, caches e configurações de IP fixo.
+No lugar dos usuários originais, são criados os usuários que você escolher.
+.PP
+A imagem gerada liga em
+.BR BIOS ,
+.B UEFI
+e
+.B UEFI com Secure Boot
+e usa rede automática (DHCP). Ela funciona no QEMU/KVM, no Proxmox e no
+libvirt e, depois de convertida com
+.BR qemu\-img (1),
+no VirtualBox e no VMware.
+.PP
+A imagem é criada na
+.B pasta atual
+e o programa confere, antes de começar, se há espaço livre suficiente.
+.
+.SH OPÇÕES
+.TP
+.B \-\-simular
+Mostra todos os comandos que seriam executados, na ordem, sem executar nenhum
+e sem alterar nada. Não precisa de
+.BR sudo .
+É a melhor forma de entender o que o programa faz.
+.TP
+.BI \-\-plano " arquivo"
+Modo automático: lê as respostas de um arquivo TOML em vez de perguntar.
+Nenhuma pergunta é feita (adequado para scripts, cron e Ansible).
+Veja
+.B ARQUIVO DE PLANO
+abaixo.
+.TP
+.BR \-\-ajuda ", " \-h ", " \-\-help
+Mostra um resumo do uso e sai.
+.
+.SH ETAPAS
+Depois das perguntas (ou da leitura do plano), do resumo e da confirmação, o
+programa executa 9 etapas:
+.TP
+.B 1. Criar o disco virtual
+.BR qemu\-img " create"
+cria um arquivo "cru" (raw) temporário e o
+.BR losetup (8)
+o liga a um disco
+.IR /dev/loopN .
+.TP
+.B 2. Particionar e formatar
+Quatro partições GPT: BIOS boot (1 MiB), EFI (600 MiB, FAT32),
+.I /boot
+(1 GiB, ext4) e raiz (ext4, o resto do disco).
+.TP
+.B 3. Copiar o sistema
+.BR rsync (1)
+de
+.I /
+para a imagem, sem dados pessoais nem caches. Bancos de dados conhecidos
+ficam parados durante a cópia, se você pediu.
+.TP
+.B 4. Remover dados pessoais
+Apaga a identidade da máquina e os segredos (veja
+.BR "O QUE É REMOVIDO" ).
+.TP
+.B 5. Preparar o chroot
+Monta
+.IR /dev ", " /proc ", " /sys " e " /run
+dentro da imagem.
+.TP
+.B 6. Configurar o boot e a rede
+Gera
+.IR /etc/fstab ,
+limpa os parâmetros do kernel (LUKS, btrfs, resume), refaz o initramfs com
+drivers de VM, instala o GRUB para BIOS e UEFI e troca a rede por DHCP.
+.TP
+.B 7. Trocar os usuários
+Remove os usuários "humanos" (UID 1000\-59999) e as regras de
+.B sudo
+deles, bloqueia ou troca a senha do root e cria os usuários escolhidos.
+.TP
+.B 8. Gerar o .qcow2
+.BR qemu\-img " convert"
+transforma o arquivo raw no
+.I .qcow2
+final (compactado, se pedido) e o raw é apagado.
+.TP
+.B 9. Conferir
+.BR qemu\-img " check" .
+.
+.SH O QUE É REMOVIDO
+.IP \(bu 2
+.IR /home ", " /root ,
+e os usuários com UID de 1000 a 59999
+.IP \(bu
+.IR /etc/machine\-id " (fica vazio e é gerado de novo no primeiro boot)"
+.IP \(bu
+chaves SSH do servidor
+.RI ( /etc/ssh/ssh_host_* )
+.IP \(bu
+redes e senhas de Wi\-Fi: NetworkManager, netplan, iwd, wpa_supplicant
+.IP \(bu
+VPN: WireGuard, OpenVPN (cliente)
+.IP \(bu
+chaves de discos criptografados
+.RI ( /etc/cryptsetup\-keys.d ", " /etc/crypttab )
+.IP \(bu
+logs, caches, e\-mails locais, Bluetooth, impressões digitais, Kerberos
+.IP \(bu
+estado do cloud\-init (ele roda de novo na VM nova)
+.IP \(bu
+discos de VMs e de containers, swapfile
+.PP
+.B Chaves privadas TLS
+.RI ( /etc/pki/tls/private ", " /etc/ssl/private ,
+Let's Encrypt, servidor OpenVPN)
+.B não
+são apagadas, porque um serviço pode precisar delas para ligar. Elas são
+listadas no final para você decidir.
+.
+.SH ARQUIVO DE PLANO
+Formato TOML. Só
+.B imagem
+é obrigatório. Campos com nome desconhecido geram erro.
+.TP
+.BR imagem " = \(dqtemplate.qcow2\(dq"
+Nome do arquivo gerado (relativo à pasta atual) ou caminho absoluto.
+.TP
+.BR tamanho_gb " = 40"
+Tamanho do disco da VM. Padrão: o usado + 30% + 5 GB (mínimo 20).
+.TP
+.BR hostname " = \(dqtemplate\(dq"
+Nome da máquina.
+.TP
+.BR flatpak " = true"
+Incluir os Flatpaks do sistema.
+.TP
+.BR compactar " = true"
+Compactar a imagem no final.
+.TP
+.BR parar_servicos " = true"
+Parar bancos de dados ligados durante a cópia.
+.TP
+.BR sobrescrever " = false"
+Substituir a imagem se já existir.
+.TP
+.BR senha_root " / " senha_root_hash
+Sem nenhum dos dois, o root fica bloqueado (recomendado).
+.TP
+.B [[usuarios]]
+Um bloco por usuário, com
+.B nome
+(obrigatório),
+.B senha
+ou
+.B senha_hash
+(um dos dois),
+.BR admin ,
+.B trocar_senha
+e
+.B chave_ssh
+(a chave colada ou o caminho de um arquivo
+.IR .pub ).
+.PP
+Gere o hash da senha com
+.BR "openssl passwd \-6" .
+Pelo menos um usuário com
+.B admin = true
+ou uma senha de root é obrigatório.
+.
+.SH PROTEÇÕES
+.TP
+.B Ctrl+C
+Durante as etapas, o Ctrl+C não mata o programa na hora: ele desmonta tudo,
+desconecta o disco virtual, religa os serviços pausados e apaga a imagem incompleta.
+.TP
+.B Espaço livre
+Conferido antes de começar; se faltar, nada é criado.
+.TP
+.B Uma execução por vez
+Garantida pela trava
+.IR /run/maloki.lock .
+.TP
+.B Trava de caminho
+O programa só apaga arquivos dentro de
+.IR /mnt/maloki\-* ;
+qualquer outro caminho interrompe a execução.
+.
+.SH STATUS DE SAÍDA
+.TP
+.B 0
+Imagem criada (ou ajuda exibida).
+.TP
+.B 1
+Erro; a mensagem diz o motivo. Nada fica montado nem conectado.
+.TP
+.B 2
+Opção inválida na linha de comando.
+.
+.SH ARQUIVOS
+.TP
+.I /run/maloki.lock
+Trava que impede duas execuções simultâneas.
+.TP
+.I /mnt/maloki\-PID
+Onde a imagem fica montada durante a criação.
+.TP
+.I /etc/os\-release
+Usado para descobrir a família da distribuição.
+.
+.SH DISTRIBUIÇÕES
+Família Fedora (Fedora, Rocky, AlmaLinux, RHEL, CentOS) e família Debian
+(Debian, Ubuntu, Mint, Pop!_OS). Testado de ponta a ponta em Fedora 44 e
+Rocky 9; a lista atualizada está no README do projeto.
+.
+.SH EXEMPLOS
+Ver o passo a passo sem mudar nada:
+.PP
+.RS 4
+.EX
+maloki \-\-simular
+.EE
+.RE
+.PP
+Criar a imagem num HD externo, respondendo os menus:
+.PP
+.RS 4
+.EX
+cd /media/hd\-externo && sudo maloki
+.EE
+.RE
+.PP
+Sem perguntas:
+.PP
+.RS 4
+.EX
+sudo maloki \-\-plano servidor\-web.toml
+.EE
+.RE
+.PP
+Ligar a imagem sem alterar o template (disco "filho"):
+.PP
+.RS 4
+.EX
+qemu\-img create \-f qcow2 \-b template.qcow2 \-F qcow2 vm1.qcow2
+qemu\-system\-x86_64 \-enable\-kvm \-m 4G \-drive file=vm1.qcow2,if=virtio
+.EE
+.RE
+.PP
+Converter para o VirtualBox:
+.PP
+.RS 4
+.EX
+qemu\-img convert \-O vdi template.qcow2 template.vdi
+.EE
+.RE
+.
+.SH NOTAS
+No primeiro boot de sistemas com SELinux, a máquina reetiqueta os arquivos e
+reinicia sozinha uma vez.
+.PP
+O sistema é copiado
+.BR ligado .
+Programas que gravam o tempo todo e não estão na lista de bancos de dados
+pausados podem ficar inconsistentes na imagem.
+.
+.SH BUGS
+Relate em https://github.com/Daniel-Pereira-Linux/maloki/issues com a distribuição
+.RI ( /etc/os\-release ),
+o comando usado e a saída completa.
+.
+.SH VEJA TAMBÉM
+.BR qemu\-img (1),
+.BR losetup (8),
+.BR rsync (1),
+.BR sfdisk (8),
+.BR chroot (8),
+.BR grub\-install (8),
+.BR dracut (8),
+.BR useradd (8)
+.PP
+Site: https://daniel-pereira-linux.github.io/maloki

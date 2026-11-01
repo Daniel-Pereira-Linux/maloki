@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>maloki: seu Linux vira um template</title>
+<meta name="description" content="Transforme o Linux que está rodando numa imagem QEMU (.qcow2) portátil, sem os seus dados pessoais. BIOS, UEFI e Secure Boot.">
+<meta property="og:title" content="maloki">
+<meta property="og:description" content="Seu Linux vira um template .qcow2, sem os seus dados pessoais.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fbfaf8; --bg2: #f2f0eb; --card: #ffffff; --ink: #14151a; --ink2: #4a4c55; --ink3: #7a7c86;
+  --line: #e4e1da; --accent: #e8590c; --accent2: #c2410c; --accent-soft: #fff1e6;
+  --ok: #15803d; --no: #b91c1c; --warn: #a16207;
+  --term: #15161c; --term-ink: #e8e6e3; --term-dim: #8b8d98; --term-green: #7ee2a8; --term-orange: #ffb36b;
+  --radius: 14px; --shadow: 0 1px 2px rgba(20,21,26,.06), 0 8px 28px rgba(20,21,26,.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e0f13; --bg2: #15171d; --card: #181a21; --ink: #ecebe8; --ink2: #b4b5bd; --ink3: #8a8c96;
+    --line: #2a2d36; --accent: #ff7a2e; --accent2: #ff9a5c; --accent-soft: #2a1a10;
+    --ok: #4ade80; --no: #f87171; --warn: #facc15;
+    --term: #0a0b0e; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e0f13; --bg2: #15171d; --card: #181a21; --ink: #ecebe8; --ink2: #b4b5bd; --ink3: #8a8c96;
+  --line: #2a2d36; --accent: #ff7a2e; --accent2: #ff9a5c; --accent-soft: #2a1a10;
+  --ok: #4ade80; --no: #f87171; --warn: #facc15;
+  --term: #0a0b0e; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.65 Inter, system-ui, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+code { background: var(--bg2); border: 1px solid var(--line); padding: .05em .4em; border-radius: 6px; font-size: .88em; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+/* barra do topo */
+nav.topo { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--line); }
+nav.topo .wrap { display: flex; align-items: center; gap: 20px; height: 58px; }
+.marca { font-weight: 800; font-size: 19px; color: var(--ink); letter-spacing: -.02em; }
+.marca span { color: var(--accent); }
+nav.topo .links { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+nav.topo .links a { color: var(--ink2); }
+nav.topo .links a:hover { color: var(--ink); text-decoration: none; }
+.tema { background: none; border: 1px solid var(--line); color: var(--ink2); border-radius: 8px; padding: 4px 9px; cursor: pointer; font-size: 14px; }
+@media (max-width: 760px) { nav.topo .links a:not(.gh) { display: none; } }
+
+/* hero */
+.hero { padding: 72px 0 40px; text-align: center; }
+.selo { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink2); border: 1px solid var(--line); background: var(--card); padding: 4px 12px; border-radius: 999px; }
+.selo b { color: var(--accent); }
+h1 { font-size: clamp(36px, 6vw, 64px); line-height: 1.05; letter-spacing: -.035em; margin: 22px auto 16px; max-width: 820px; font-weight: 800; }
+h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), #f59f00); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { font-size: clamp(17px, 2.2vw, 20px); color: var(--ink2); max-width: 680px; margin: 0 auto 32px; }
+.chips { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 34px; }
+.chips span { font-size: 13px; padding: 4px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent2); font-weight: 600; }
+
+/* caixa de instalação */
+.instalar { max-width: 760px; margin: 0 auto; background: var(--term); border-radius: var(--radius); box-shadow: var(--shadow); text-align: left; overflow: hidden; }
+.instalar .barra { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border-bottom: 1px solid #23252e; }
+.instalar .barra i { width: 11px; height: 11px; border-radius: 50%; background: #3a3c46; }
+.instalar .barra small { margin-left: 8px; color: var(--term-dim); font-size: 12px; }
+.instalar .linha { display: flex; align-items: center; gap: 12px; padding: 18px; }
+.instalar pre { margin: 0; flex: 1; color: var(--term-ink); font-size: 14.5px; overflow-x: auto; white-space: pre; }
+.instalar pre .p { color: var(--term-green); user-select: none; }
+.copiar { flex: none; border: 1px solid #343743; background: #1f2129; color: var(--term-ink); border-radius: 8px; padding: 7px 12px; cursor: pointer; font: 600 13px Inter, sans-serif; }
+.copiar:hover { border-color: var(--term-orange); }
+.nota { font-size: 13px; color: var(--ink3); margin-top: 14px; }
+
+/* seções */
+section { padding: 64px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(26px, 3.4vw, 36px); letter-spacing: -.025em; margin: 0 0 10px; }
+.lead { color: var(--ink2); max-width: 680px; margin: 0 0 34px; font-size: 17px; }
+.grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+.card h3 { margin: 10px 0 6px; font-size: 17px; }
+.card p { margin: 0; color: var(--ink2); font-size: 15px; }
+.icone { font-size: 24px; }
+
+/* terminal demonstrativo */
+.terminal { background: var(--term); color: var(--term-ink); border-radius: var(--radius); padding: 20px 22px; font: 13.5px/1.7 "JetBrains Mono", monospace; box-shadow: var(--shadow); overflow-x: auto; white-space: pre; }
+.terminal .p { color: var(--term-green); } .terminal .d { color: var(--term-dim); } .terminal .o { color: var(--term-orange); font-weight: 600; } .terminal .g { color: var(--term-green); }
+
+/* etapas */
+.etapas { counter-reset: e; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.etapa { display: flex; gap: 14px; align-items: flex-start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.etapa::before { counter-increment: e; content: counter(e); flex: none; width: 28px; height: 28px; border-radius: 8px; background: var(--accent-soft); color: var(--accent2); display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+.etapa b { display: block; font-size: 15px; } .etapa span { color: var(--ink2); font-size: 14px; }
+
+/* tabelas */
+.tabela { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink3); background: var(--bg2); }
+.st { font-weight: 600; white-space: nowrap; }
+.st.ok { color: var(--ok); } .st.warn { color: var(--warn); } .st.no { color: var(--no); }
+
+.duas { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .duas { grid-template-columns: 1fr; } }
+.lista { margin: 0; padding: 0; list-style: none; }
+.lista li { padding: 7px 0 7px 28px; position: relative; color: var(--ink2); font-size: 15px; border-bottom: 1px dashed var(--line); }
+.lista li:last-child { border-bottom: none; }
+.lista li::before { position: absolute; left: 0; font-weight: 800; }
+.vai li::before { content: "✓"; color: var(--ok); }
+.naovai li::before { content: "✕"; color: var(--no); }
+
+/* abas de uso */
+.abas { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.abas button { border: 1px solid var(--line); background: var(--card); color: var(--ink2); padding: 8px 14px; border-radius: 9px; cursor: pointer; font: 600 14px Inter, sans-serif; }
+.abas button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.painel[hidden] { display: none; }
+.painel p { color: var(--ink2); }
+
+/* manual */
+.manual { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px clamp(18px, 4vw, 40px); }
+.manual h3 { font: 600 13px "JetBrains Mono", monospace; letter-spacing: .08em; color: var(--accent2); margin: 26px 0 8px; }
+.manual h3:first-child { margin-top: 0; }
+.manual dl { margin: 0; } .manual dt { font-family: "JetBrains Mono", monospace; font-weight: 600; margin-top: 12px; }
+.manual dd { margin: 4px 0 0 22px; color: var(--ink2); }
+.manual p { margin: 6px 0; color: var(--ink2); }
+.manual .cab { display: flex; justify-content: space-between; font: 13px "JetBrains Mono", monospace; color: var(--ink3); border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 18px; }
+
+details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
+details summary { cursor: pointer; font-weight: 600; }
+details p, details pre { color: var(--ink2); }
+
+pre.bloco { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 13.5px; }
+
+footer { border-top: 1px solid var(--line); padding: 36px 0 60px; color: var(--ink3); font-size: 14px; }
+footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<nav class="topo">
+  <div class="wrap">
+    <a class="marca" href="#">malo<span>ki</span></a>
+    <div class="links">
+      <a href="#como-funciona">Como funciona</a>
+      <a href="#uso">Uso</a>
+      <a href="#manual">Manual</a>
+      <a href="#perguntas">Perguntas</a>
+      <a class="gh" href="https://github.com/Daniel-Pereira-Linux/maloki">GitHub ↗</a>
+    </div>
+    <button class="tema" id="tema" title="Trocar tema claro/escuro" aria-label="Trocar tema">◐</button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="selo"><b>v0.1.0</b> · software livre (MIT) · escrito em Rust</span>
+    <h1>Seu Linux vira um <em>template</em>.<br>Seus dados ficam com você.</h1>
+    <p class="sub">O <b>maloki</b> transforma o sistema que está rodando numa imagem <code>.qcow2</code> portátil, sem <code>/home</code>, sem senhas de Wi‑Fi, sem chaves, com os usuários que você escolher.</p>
+    <div class="chips"><span>BIOS</span><span>UEFI</span><span>Secure Boot</span><span>rede automática</span><span>modo simulação</span><span>Ctrl+C seguro</span></div>
+
+    <div class="instalar">
+      <div class="barra"><i></i><i></i><i></i><small>instalar com um comando</small></div>
+      <div class="linha">
+        <pre id="cmd-instalar"><span class="p">$ </span>curl -fsSL https://daniel-pereira-linux.github.io/maloki/install.sh | sh</pre>
+        <button class="copiar" data-copiar="curl -fsSL https://daniel-pereira-linux.github.io/maloki/install.sh | sh">Copiar</button>
+      </div>
+    </div>
+    <p class="nota">Linux x86_64 · o instalador confere o checksum SHA‑256 · <a href="https://github.com/Daniel-Pereira-Linux/maloki/blob/main/install.sh">leia o script antes</a> · <a href="https://github.com/Daniel-Pereira-Linux/maloki/releases/latest">ou baixe o binário</a></p>
+  </div>
+</header>
+
+<section id="demo">
+  <div class="wrap">
+    <h2>Três comandos. Uma imagem.</h2>
+    <p class="lead">Você responde algumas perguntas (ou passa um arquivo) e o maloki faz o resto, mostrando cada comando que executa.</p>
+<div class="terminal"><span class="p">$</span> maloki --simular   <span class="d"># veja tudo antes, sem mudar nada</span>
+<span class="p">$</span> cd /media/hd-externo
+<span class="p">$</span> sudo maloki
+<span class="d">Sistema atual: Fedora Linux 44 (família Fedora)
+A imagem vai ligar em: BIOS e UEFI
+Espaço: 412.3 GB livres, a imagem precisa de até 41.2 GB.</span>
+
+<span class="o">━━━ [3/9] Copiando o sistema ━━━</span>
+  $ rsync -aAXH --exclude=/home/* --exclude=/root/* ... / /mnt/maloki-4242/
+<span class="o">━━━ [4/9] Removendo dados pessoais e identidade da máquina ━━━</span>
+  ✗ apagado .../etc/NetworkManager/system-connections/CasaWifi.nmconnection
+  ✗ apagado .../etc/ssh/ssh_host_ed25519_key
+<span class="o">━━━ [7/9] Trocando os usuários ━━━</span>
+  $ userdel -R /mnt/maloki-4242 daniel
+  $ useradd -R /mnt/maloki-4242 -m -s /bin/bash -G wheel maria
+
+<span class="g">✅ Imagem pronta: /media/hd-externo/template-fedora.qcow2</span></div>
+  </div>
+</section>
+
+<section id="como-funciona">
+  <div class="wrap">
+    <h2>O que acontece por dentro</h2>
+    <p class="lead">O maloki é um maestro: ele conduz as ferramentas que o Linux já tem, na ordem certa, e limpa tudo se algo der errado no caminho.</p>
+    <div class="etapas">
+      <div class="etapa"><div><b>Cria o disco virtual</b><span><code>losetup</code> faz um arquivo virar o disco <code>/dev/loop0</code></span></div></div>
+      <div class="etapa"><div><b>Particiona e formata</b><span>BIOS boot, EFI, <code>/boot</code> e raiz: liga em qualquer firmware</span></div></div>
+      <div class="etapa"><div><b>Copia o sistema</b><span><code>rsync</code> sem dados pessoais; bancos de dados pausados</span></div></div>
+      <div class="etapa"><div><b>Remove o que é seu</b><span>Wi‑Fi, VPN, chaves, <code>machine-id</code>, logs, histórico</span></div></div>
+      <div class="etapa"><div><b>Prepara o chroot</b><span>Para rodar comandos "dentro" da imagem</span></div></div>
+      <div class="etapa"><div><b>Ajusta boot e rede</b><span>GRUB, initramfs com drivers de VM, IP fixo vira DHCP</span></div></div>
+      <div class="etapa"><div><b>Troca os usuários</b><span>Remove os seus e cria os que você escolheu</span></div></div>
+      <div class="etapa"><div><b>Gera o .qcow2</b><span><code>qemu-img convert</code>, compactado se você quiser</span></div></div>
+      <div class="etapa"><div><b>Confere</b><span><code>qemu-img check</code> na imagem pronta</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="o-que-vai">
+  <div class="wrap">
+    <h2>O que vai e o que fica de fora</h2>
+    <p class="lead">A regra: o que faz o sistema funcionar vai; o que é <b>seu</b> ou identifica <b>esta máquina</b> fica de fora.</p>
+    <div class="duas">
+      <div class="card"><h3>✅ Vai para a imagem</h3>
+        <ul class="lista vai">
+          <li>Programas instalados (e Flatpaks, se quiser)</li>
+          <li>Configurações do sistema em <code>/etc</code></li>
+          <li>Serviços e o que eles precisam</li>
+          <li>Kernel, com o boot ajustado para VMs</li>
+          <li>Os usuários que <b>você</b> criar</li>
+        </ul>
+      </div>
+      <div class="card"><h3>🚫 Fica de fora</h3>
+        <ul class="lista naovai">
+          <li><code>/home</code>, <code>/root</code> e o seu usuário</li>
+          <li>Senhas de Wi‑Fi e VPN</li>
+          <li>Chaves SSH do servidor e <code>machine-id</code></li>
+          <li>IP fixo (vira DHCP)</li>
+          <li>Logs, caches, histórico, e‑mails, digitais</li>
+          <li>Discos de VMs e containers</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="distros">
+  <div class="wrap">
+    <h2>Distribuições</h2>
+    <p class="lead">"Testado" quer dizer: clonamos uma máquina de verdade, ligamos a imagem em BIOS, UEFI e Secure Boot e conferimos mais de 20 itens por dentro.</p>
+    <div class="tabela"><table>
+      <thead><tr><th>Distribuição</th><th>Status</th><th>Detalhes</th></tr></thead>
+      <tbody>
+        <tr><td><b>Fedora</b></td><td class="st ok">✓ testado</td><td>Fedora 44 (btrfs, SELinux ativo)</td></tr>
+        <tr><td><b>Rocky / AlmaLinux / RHEL / CentOS</b></td><td class="st ok">✓ testado</td><td>Rocky 9, com SELinux ativo</td></tr>
+        <tr><td><b>Debian</b></td><td class="st warn">◐ deve funcionar</td><td>Passou numa versão anterior. <a href="https://github.com/Daniel-Pereira-Linux/maloki/issues/new/choose">Conte como foi!</a></td></tr>
+        <tr><td><b>Ubuntu / Mint / Pop!_OS</b></td><td class="st warn">◐ deve funcionar</td><td>Mesma família do Debian. <a href="https://github.com/Daniel-Pereira-Linux/maloki/issues/new/choose">Conte como foi!</a></td></tr>
+        <tr><td>Arch, openSUSE, Alpine</td><td class="st no">✕ ainda não</td><td>O programa avisa e não faz nada. Quer ajudar? Veja o guia do código.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="uso">
+  <div class="wrap">
+    <h2>Uso</h2>
+    <p class="lead">Três jeitos de rodar, para três momentos diferentes.</p>
+    <div class="abas" role="tablist">
+      <button role="tab" aria-selected="true" data-aba="a-simular">Simular</button>
+      <button role="tab" aria-selected="false" data-aba="a-menus">Com menus</button>
+      <button role="tab" aria-selected="false" data-aba="a-plano">Automático (--plano)</button>
+      <button role="tab" aria-selected="false" data-aba="a-usar">Usar a imagem</button>
+    </div>
+    <div class="painel" id="a-simular">
+      <p>Mostra <b>cada comando</b> que seria executado, na ordem, sem executar nenhum. Não precisa de sudo. É o melhor jeito de entender o programa.</p>
+      <pre class="bloco">maloki --simular</pre>
+    </div>
+    <div class="painel" id="a-menus" hidden>
+      <p>Vá para uma pasta com espaço livre (a imagem é criada ali) e responda as perguntas: nome da imagem, tamanho, hostname, usuários, root, compactação.</p>
+      <pre class="bloco">cd /media/hd-externo
+sudo maloki</pre>
+    </div>
+    <div class="painel" id="a-plano" hidden>
+      <p>Para scripts, cron e Ansible: as respostas vêm de um arquivo TOML e nenhuma pergunta é feita. Use <code>senha_hash</code> para não deixar a senha escrita no arquivo.</p>
+      <pre class="bloco">imagem = "template.qcow2"
+hostname = "web-01"
+compactar = true
+
+[[usuarios]]
+nome = "maria"
+senha_hash = "$6$..."        # openssl passwd -6
+admin = true
+chave_ssh = "~/.ssh/id_ed25519.pub"</pre>
+      <pre class="bloco">sudo maloki --plano meu-plano.toml</pre>
+    </div>
+    <div class="painel" id="a-usar" hidden>
+      <p>Crie um disco "filho" (overlay) para não alterar o template, e ligue:</p>
+      <pre class="bloco">qemu-img create -f qcow2 -b template.qcow2 -F qcow2 vm1.qcow2
+qemu-system-x86_64 -enable-kvm -m 4G -cpu host \
+  -drive file=vm1.qcow2,if=virtio -nic user,hostfwd=tcp::2222-:22
+ssh -p 2222 maria@localhost</pre>
+      <p>Para o VirtualBox ou o VMware, converta:</p>
+      <pre class="bloco">qemu-img convert -O vdi  template.qcow2 template.vdi
+qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
+    </div>
+  </div>
+</section>
+
+<section id="protecoes">
+  <div class="wrap">
+    <h2>Feito para não estragar nada</h2>
+    <p class="lead">Ele roda como root e mexe com discos. Por isso cada risco tem uma trava.</p>
+    <div class="grade">
+      <div class="card"><div class="icone">🔍</div><h3>Simulação</h3><p>Veja todos os comandos antes. Nenhum é executado.</p></div>
+      <div class="card"><div class="icone">⌨️</div><h3>Ctrl+C seguro</h3><p>Cancelou no meio? Desmonta, desconecta, religa os serviços e apaga a imagem incompleta.</p></div>
+      <div class="card"><div class="icone">💾</div><h3>Espaço conferido</h3><p>Se não couber, nada começa. O seu disco nunca enche no meio.</p></div>
+      <div class="card"><div class="icone">🛡️</div><h3>Trava de caminho</h3><p>Só apaga dentro de <code>/mnt/maloki-*</code>. Qualquer outro caminho para tudo.</p></div>
+      <div class="card"><div class="icone">🔒</div><h3>Uma execução por vez</h3><p>Duas cópias juntas poderiam brigar pelo mesmo disco. Não deixamos.</p></div>
+      <div class="card"><div class="icone">🗄️</div><h3>Bancos pausados</h3><p>PostgreSQL, MySQL, Redis, MongoDB param durante a cópia e voltam no fim.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="manual">
+  <div class="wrap">
+    <h2>Manual</h2>
+    <p class="lead">O mesmo conteúdo de <code>man maloki</code>, que o instalador já deixa no seu sistema.</p>
+    <div class="manual">
+      <div class="cab"><span>MALOKI(1)</span><span>Comandos do Usuário</span><span>MALOKI(1)</span></div>
+      <h3>NOME</h3>
+      <p><b>maloki</b> — transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais</p>
+      <h3>SINOPSE</h3>
+      <p class="mono"><b>sudo maloki</b><br><b>sudo maloki --plano</b> <i>arquivo.toml</i><br><b>maloki --simular</b> [<b>--plano</b> <i>arquivo.toml</i>]<br><b>maloki --ajuda</b></p>
+      <h3>OPÇÕES</h3>
+      <dl>
+        <dt>--simular</dt><dd>Mostra todos os comandos que seriam executados, sem executar nenhum e sem alterar nada. Não precisa de sudo.</dd>
+        <dt>--plano <i>arquivo</i></dt><dd>Modo automático: lê as respostas de um arquivo TOML. Nenhuma pergunta é feita.</dd>
+        <dt>--ajuda, -h, --help</dt><dd>Mostra um resumo do uso e sai.</dd>
+      </dl>
+      <h3>ARQUIVO DE PLANO</h3>
+      <dl>
+        <dt>imagem = "template.qcow2"</dt><dd>Obrigatório. Nome do arquivo (relativo à pasta atual) ou caminho absoluto.</dd>
+        <dt>tamanho_gb = 40</dt><dd>Tamanho do disco da VM. Padrão: o usado + 30% + 5 GB (mínimo 20).</dd>
+        <dt>hostname = "template"</dt><dd>Nome da máquina.</dd>
+        <dt>flatpak · compactar · parar_servicos</dt><dd>Padrão <code>true</code>.</dd>
+        <dt>sobrescrever</dt><dd>Padrão <code>false</code>.</dd>
+        <dt>senha_root · senha_root_hash</dt><dd>Sem nenhum dos dois, o root fica bloqueado (recomendado).</dd>
+        <dt>[[usuarios]]</dt><dd><code>nome</code>, <code>senha</code> ou <code>senha_hash</code>, <code>admin</code>, <code>trocar_senha</code>, <code>chave_ssh</code>. Pelo menos um admin (ou senha de root) é obrigatório.</dd>
+      </dl>
+      <h3>STATUS DE SAÍDA</h3>
+      <dl>
+        <dt>0</dt><dd>Imagem criada (ou ajuda exibida).</dd>
+        <dt>1</dt><dd>Erro; a mensagem diz o motivo. Nada fica montado nem conectado.</dd>
+        <dt>2</dt><dd>Opção inválida na linha de comando.</dd>
+      </dl>
+      <h3>ARQUIVOS</h3>
+      <dl>
+        <dt>/run/maloki.lock</dt><dd>Trava contra duas execuções simultâneas.</dd>
+        <dt>/mnt/maloki-PID</dt><dd>Onde a imagem fica montada durante a criação.</dd>
+      </dl>
+      <h3>VEJA TAMBÉM</h3>
+      <p class="mono">qemu-img(1), losetup(8), rsync(1), sfdisk(8), chroot(8), grub-install(8), dracut(8), useradd(8)</p>
+      <p style="margin-top:18px"><a href="https://github.com/Daniel-Pereira-Linux/maloki/blob/main/man/maloki.1">Manpage completa (fonte) →</a></p>
+    </div>
+  </div>
+</section>
+
+<section id="perguntas">
+  <div class="wrap">
+    <h2>Perguntas frequentes</h2>
+    <details><summary>Precisa de cloud-init, Docker ou alguma coisa especial?</summary>
+      <p>Não. Precisa de <code>qemu-img</code>, <code>rsync</code>, <code>dosfstools</code> e do GRUB, que o instalador da sua distro já tem. O programa avisa se faltar algo.</p>
+      <pre class="bloco"># Fedora / Rocky
+sudo dnf install qemu-img rsync dosfstools grub2-pc-modules
+# Debian / Ubuntu
+sudo apt install qemu-utils rsync dosfstools grub-pc-bin grub-efi-amd64-bin</pre></details>
+    <details><summary>Minhas chaves de HTTPS vão para a imagem?</summary>
+      <p>Sim. Um servidor web pode precisar delas para ligar, então o maloki <b>não apaga</b>, mas <b>lista</b> todas no final para você decidir. Se a imagem for compartilhada, troque essas chaves.</p></details>
+    <details><summary>Quanto tempo demora?</summary>
+      <p>Quase tudo é a cópia: um servidor de 3 GB leva poucos minutos; um desktop de 20 GB, de 10 a 20 minutos. Compactar leva outro tanto.</p></details>
+    <details><summary>A imagem reiniciou sozinha no primeiro boot. É normal?</summary>
+      <p>Sim, em sistemas com SELinux (Fedora, Rocky...): ela reetiqueta os arquivos e reinicia uma vez.</p></details>
+    <details><summary>Quero contribuir mas estou aprendendo Rust.</summary>
+      <p>Perfeito: o código foi escrito para isso. Comece pelo <a href="https://github.com/Daniel-Pereira-Linux/maloki/blob/main/GUIA-DO-CODIGO.md">guia do código</a>: ele mostra por onde ler, qual arquivo chama qual e receitas passo a passo.</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span><b>maloki</b> · software livre sob a licença MIT</span>
+    <span><a href="https://github.com/Daniel-Pereira-Linux/maloki">GitHub</a> · <a href="https://github.com/Daniel-Pereira-Linux/maloki/releases">Versões</a> · <a href="https://github.com/Daniel-Pereira-Linux/maloki/issues">Issues</a> · <a href="https://github.com/Daniel-Pereira-Linux/maloki/blob/main/GUIA-DO-CODIGO.md">Guia do código</a></span>
+  </div>
+</footer>
+
+<script>
+  // Botões "Copiar"
+  document.querySelectorAll('[data-copiar]').forEach(function (botao) {
+    botao.addEventListener('click', function () {
+      navigator.clipboard.writeText(botao.dataset.copiar).then(function () {
+        botao.textContent = 'Copiado ✓';
+        setTimeout(function () { botao.textContent = 'Copiar'; }, 1600);
+      });
+    });
+  });
+  // Abas da seção "Uso"
+  var abas = document.querySelectorAll('[data-aba]');
+  abas.forEach(function (aba) {
+    aba.addEventListener('click', function () {
+      abas.forEach(function (outra) {
+        outra.setAttribute('aria-selected', String(outra === aba));
+        document.getElementById(outra.dataset.aba).hidden = outra !== aba;
+      });
+    });
+  });
+  // Tema claro/escuro (lembra a escolha neste navegador)
+  var raiz = document.documentElement;
+  try { var salvo = localStorage.getItem('maloki-tema'); if (salvo) raiz.dataset.theme = salvo; } catch (e) {}
+  document.getElementById('tema').addEventListener('click', function () {
+    var escuro = raiz.dataset.theme ? raiz.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    raiz.dataset.theme = escuro ? 'light' : 'dark';
+    try { localStorage.setItem('maloki-tema', raiz.dataset.theme); } catch (e) {}
+  });
+</script>
+</body>
+</html>
