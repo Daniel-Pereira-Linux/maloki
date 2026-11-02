@@ -1,6 +1,6 @@
 [package]
 name = "maloki"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais"
 license = "MIT"

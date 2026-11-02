@@ -4,7 +4,7 @@ Todas as mudanças importantes do maloki ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [0.2.0] - 2026-11-02
 
 > **Testado de ponta a ponta em VMs:** o template no Debian 13, Fedora 44,
 > Rocky 9 e Ubuntu 24.04 (BIOS, UEFI e Secure Boot); as proteções; a ISO do
@@ -89,4 +89,5 @@ Primeira versão pública.
   (`tests/e2e/rodar.sh`).
 - Manpage `maloki(1)`, instalador `install.sh`, site do projeto.
 
+[0.2.0]: https://github.com/Daniel-Pereira-Linux/maloki/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Daniel-Pereira-Linux/maloki/releases/tag/v0.1.0
