@@ -108,6 +108,24 @@ impl Disco {
         Ok(())
     }
 
+    /// Desmonta as últimas montagens até sobrarem só `quantas` (as primeiras).
+    /// Usado na ISO: antes de compactar o sistema, tiramos /dev, /proc, /sys e
+    /// /run do chroot, mas a raiz, o /boot e a EFI continuam montados.
+    pub fn desmontar_ate(&mut self, quantas: usize) -> Resultado<()> {
+        if !self.exec.simular {
+            encerrar_processos_na_imagem(&self.raiz);
+        }
+        while self.montagens.len() > quantas {
+            let pasta = self.montagens.pop().unwrap_or_default();
+            if !self.desmontar(&pasta) {
+                // Volta para a lista: o Drop tenta de novo no fim.
+                self.montagens.push(pasta.clone());
+                return Err(format!("não consegui desmontar {}", pasta).into());
+            }
+        }
+        Ok(())
+    }
+
     /// Desmonta tudo, do último para o primeiro (como tirar pratos de uma pilha).
     /// Devolve `true` se TUDO foi desmontado direitinho.
     pub fn desmontar_tudo(&mut self) -> bool {

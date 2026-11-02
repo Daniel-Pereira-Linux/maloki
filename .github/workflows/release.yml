@@ -25,7 +25,7 @@ jobs:
         run: |
           mkdir -p dist/maloki
           cp target/x86_64-unknown-linux-musl/release/maloki dist/maloki/
-          cp man/maloki.1 README.md LICENSE exemplo-plano.toml dist/maloki/
+          cp man/maloki.1 README.md LICENSE exemplo-plano.toml exemplo-iso.toml dist/maloki/
           cd dist
           tar -czf maloki-x86_64-linux.tar.gz maloki
           sha256sum maloki-x86_64-linux.tar.gz > maloki-x86_64-linux.tar.gz.sha256

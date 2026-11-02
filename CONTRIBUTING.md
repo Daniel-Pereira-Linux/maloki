@@ -30,6 +30,7 @@ cargo clippy --all-targets     # sem avisos
 - Comentários no código em **português**, explicando o **porquê**.
 - Siga o checklist do guia: [seção 12](GUIA-DO-CODIGO.md#12-checklist-antes-de-abrir-o-pull-request).
 - Mexeu em boot, rede ou limpeza? Rode o e2e da distro: `tests/e2e/rodar.sh debian`.
+- Mexeu na ISO (`live.rs`)? Rode `tests/e2e/rodar.sh iso-debian iso-fedora`.
 
 ## Convivência
 

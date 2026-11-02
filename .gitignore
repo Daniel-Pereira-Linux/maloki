@@ -2,3 +2,4 @@
 *.qcow2
 *.qcow2.tmp
 /dist
+__pycache__/

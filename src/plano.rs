@@ -1,5 +1,10 @@
 // O "plano" é tudo o que a pessoa escolheu: nome da imagem, tamanho, usuários...
 //
+// O maloki gera dois tipos de arquivo (o `Tipo`):
+//   - template: uma imagem .qcow2 que liga direto numa VM (QEMU, Proxmox...)
+//   - iso:      uma ISO "live" com o instalador Calamares, para instalar o
+//               sistema em qualquer computador (ou VM) pelo pendrive/DVD
+//
 // Existem duas formas de montar o plano, e o resto do programa não sabe a diferença:
 //   1. perguntar()     -> menus no terminal (modo interativo)
 //   2. do_arquivo()    -> lê um arquivo .toml (modo automático, sem perguntas;
@@ -10,12 +15,43 @@ use crate::distro::Distro;
 use crate::servicos;
 use crate::usuarios::{self, Usuario};
 use crate::Resultado;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use serde::Deserialize;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// O que gerar.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")] // no .toml: tipo = "template" ou tipo = "iso"
+pub enum Tipo {
+    Template,
+    Iso,
+}
+
+/// Algoritmo de compressão. Cada tipo aceita dois:
+///   template (.qcow2): zstd (padrão) ou zlib (para QEMU antigo, antes do 5.1)
+///   iso (squashfs):    xz (padrão, a menor ISO) ou zstd (um pouco maior, liga mais rápido)
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compressao {
+    Zstd,
+    Zlib,
+    Xz,
+}
+
+impl Compressao {
+    pub fn nome(&self) -> &'static str {
+        match self {
+            Compressao::Zstd => "zstd",
+            Compressao::Zlib => "zlib",
+            Compressao::Xz => "xz",
+        }
+    }
+}
 
 pub struct Plano {
-    pub imagem: String,
+    pub tipo: Tipo,
+    pub imagem: String, // caminho completo e REAL (sem "..", sem links) do arquivo final
     pub tamanho_gb: u64,
     pub usado_bytes: u64, // quanto o sistema ocupa (estimativa do `du`)
     pub hostname: String,
@@ -24,6 +60,7 @@ pub struct Plano {
     pub senha_root: Option<String>, // None = root bloqueado
     pub senha_root_e_hash: bool,
     pub compactar: bool,
+    pub compressao: Compressao,
     pub parar_servicos: Vec<String>, // bancos de dados parados durante a cópia
 }
 
@@ -37,25 +74,115 @@ fn em_gb(bytes: u64) -> u64 {
     bytes.div_ceil(1_000_000_000)
 }
 
+/// A pasta onde ficam os arquivos da ISO enquanto ela é montada:
+/// fedora.iso -> fedora.iso.conteudo
+pub fn pasta_conteudo(imagem: &str) -> String {
+    format!("{}.conteudo", imagem)
+}
+
+/// O que o plano precisa saber do computador. Fica num struct para os testes
+/// poderem inventar um computador qualquer.
+pub struct Ambiente {
+    pub usado_bytes: u64,
+    pub pasta_atual: String,
+    pub qemu_aceita_zstd: bool,
+    pub passwd: String, // o /etc/passwd deste computador
+    pub group: String,  // o /etc/group deste computador
+}
+
+impl Ambiente {
+    fn deste_computador(incluir_flatpak: bool) -> Resultado<Ambiente> {
+        Ok(Ambiente {
+            usado_bytes: copia::estimar_tamanho(incluir_flatpak),
+            pasta_atual: std::env::current_dir()?.to_string_lossy().to_string(),
+            qemu_aceita_zstd: qemu_aceita_zstd(),
+            passwd: fs::read_to_string("/etc/passwd").unwrap_or_default(),
+            group: fs::read_to_string("/etc/group").unwrap_or_default(),
+        })
+    }
+}
+
+/// O .qcow2 com zstd precisa do QEMU 5.1 ou mais novo (de 2020).
+/// `qemu-img --version` escreve "qemu-img version 10.2.2 (...)".
+fn qemu_aceita_zstd() -> bool {
+    let Ok(saida) = std::process::Command::new("qemu-img").arg("--version").output() else {
+        return false;
+    };
+    versao_aceita_zstd(&String::from_utf8_lossy(&saida.stdout))
+}
+
+fn versao_aceita_zstd(texto: &str) -> bool {
+    let versao = texto.split_whitespace().skip_while(|p| *p != "version").nth(1).unwrap_or("");
+    let mut numeros = versao.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    let (maior, menor) = (numeros.next().unwrap_or(0), numeros.next().unwrap_or(0));
+    (maior, menor) >= (5, 1)
+}
+
+/// Transforma o nome digitado no caminho completo e REAL do arquivo.
+///
+/// Por que "real"? O rsync precisa deixar de fora o arquivo que estamos criando
+/// (senão ele copia a imagem para dentro dela mesma). Ele compara caminhos
+/// reais: "/srv/imgs/../out/t.qcow2" ou um link simbólico no caminho não
+/// casariam. Por isso resolvemos a pasta com `canonicalize`.
+pub fn resolver_caminho(nome: &str, pasta_atual: &str) -> Result<String, String> {
+    let nome = nome.trim();
+    let caminho = Path::new(pasta_atual).join(nome);
+    let arquivo = match caminho.file_name() {
+        Some(arquivo) if !nome.is_empty() && !nome.ends_with('/') && !nome.ends_with("/..") && nome != ".." => arquivo,
+        _ => return Err(format!("'{}' não é um nome de arquivo (ex.: template.qcow2)", nome)),
+    };
+    let pasta = caminho.parent().unwrap_or(Path::new("/"));
+    let pasta_real: PathBuf = fs::canonicalize(pasta).map_err(|_| format!("a pasta {} não existe", pasta.display()))?;
+    if !pasta_real.is_dir() {
+        return Err(format!("{} não é uma pasta", pasta_real.display()));
+    }
+    let completo = pasta_real.join(arquivo);
+    if completo.is_dir() {
+        return Err(format!("{} é uma pasta; informe o nome de um arquivo", completo.display()));
+    }
+    Ok(completo.to_string_lossy().to_string())
+}
+
 // ======================= 1. MENUS (modo interativo) =======================
 
 pub fn perguntar(distro: &Distro) -> Resultado<Plano> {
     let tema = ColorfulTheme::default();
 
-    // Caminho absoluto da imagem, na pasta onde o programa foi chamado.
+    let tipo = match Select::with_theme(&tema)
+        .with_prompt("O que você quer gerar?")
+        .items(&[
+            "Template para VMs (.qcow2): liga direto no QEMU, Proxmox, virt-manager...",
+            "ISO instalável: sessão live + instalador Calamares (pendrive, DVD ou VM)",
+        ])
+        .default(0)
+        .interact()?
+    {
+        0 => Tipo::Template,
+        _ => Tipo::Iso,
+    };
+
+    let sugestao = match tipo {
+        Tipo::Template => format!("template-{}.qcow2", distro.id),
+        Tipo::Iso => format!("{}-maloki.iso", distro.id),
+    };
+    let pasta_atual = std::env::current_dir()?.to_string_lossy().to_string();
     let nome: String = Input::with_theme(&tema)
-        .with_prompt("Nome do arquivo da imagem")
-        .default(format!("template-{}.qcow2", distro.id))
+        .with_prompt("Nome do arquivo")
+        .default(sugestao)
+        .validate_with(|nome: &String| resolver_caminho(nome, &pasta_atual).map(|_| ()))
         .interact_text()?;
-    let imagem = std::env::current_dir()?.join(&nome).to_string_lossy().to_string();
+    let imagem = resolver_caminho(&nome, &pasta_atual)?;
     if Path::new(&imagem).exists() {
         let sobrescrever = Confirm::with_theme(&tema)
-            .with_prompt(format!("{} já existe. Sobrescrever?", nome))
+            .with_prompt(format!("{} já existe. Substituir? (a antiga só é trocada quando a nova ficar pronta)", nome))
             .default(false)
             .interact()?;
         if !sobrescrever {
-            return Err("escolha outro nome para a imagem".into());
+            return Err("escolha outro nome para o arquivo".into());
         }
+    }
+    if tipo == Tipo::Iso {
+        conferir_pasta_conteudo(&imagem)?;
     }
 
     let incluir_flatpak = Confirm::with_theme(&tema)
@@ -64,47 +191,43 @@ pub fn perguntar(distro: &Distro) -> Resultado<Plano> {
         .interact()?;
 
     println!("Calculando o tamanho do sistema...");
-    let usado_bytes = copia::estimar_tamanho(incluir_flatpak);
+    let ambiente = Ambiente::deste_computador(incluir_flatpak)?;
+    let usado_bytes = ambiente.usado_bytes;
     let usado_gb = em_gb(usado_bytes);
-    println!("O sistema ocupa cerca de {} GB (o .qcow2 só ocupa no disco o que for gravado).", usado_gb);
+    println!("O sistema ocupa cerca de {} GB.", usado_gb);
 
-    let tamanho_gb: u64 = Input::with_theme(&tema)
-        .with_prompt("Tamanho do disco da VM em GB")
-        .default(tamanho_sugerido(usado_gb))
-        .validate_with(|n: &u64| validar_tamanho(*n, usado_gb))
-        .interact_text()?;
+    // Na ISO, o tamanho é só o do disco de trabalho (não aparece para ninguém):
+    // quem escolhe o tamanho do disco é quem instala, no Calamares.
+    let tamanho_gb = match tipo {
+        Tipo::Iso => tamanho_sugerido(usado_gb),
+        Tipo::Template => Input::with_theme(&tema)
+            .with_prompt("Tamanho do disco da VM em GB (o .qcow2 só ocupa o que for gravado)")
+            .default(tamanho_sugerido(usado_gb))
+            .validate_with(|n: &u64| validar_tamanho(*n, usado_gb))
+            .interact_text()?,
+    };
 
     let hostname: String = Input::with_theme(&tema)
-        .with_prompt("Nome da máquina (hostname) da VM")
-        .default(String::from("template"))
+        .with_prompt(match tipo {
+            Tipo::Template => "Nome da máquina (hostname) da VM",
+            Tipo::Iso => "Nome da máquina na sessão live (quem instala escolhe o definitivo)",
+        })
+        .default(String::from(match tipo {
+            Tipo::Template => "template",
+            Tipo::Iso => "live",
+        }))
         .validate_with(|h: &String| validar_hostname(h))
         .interact_text()?;
 
-    println!("\n--- Usuários da imagem ---");
-    println!("Os usuários atuais desta máquina serão REMOVIDOS da cópia.");
-    let lista = usuarios::perguntar(&tema)?;
-
-    let bloquear_root = Confirm::with_theme(&tema)
-        .with_prompt("Bloquear o login do root? (recomendado; admins usam sudo)")
-        .default(true)
-        .interact()?;
-    let senha_root = if bloquear_root {
-        None
-    } else {
-        Some(
-            Password::with_theme(&tema)
-                .with_prompt("Senha do root")
-                .with_confirmation("Repita a senha", "As senhas não são iguais")
-                .interact()?,
-        )
-    };
-
-    if lista.iter().all(|u| !u.admin) && senha_root.is_none() {
-        println!("⚠ Atenção: ninguém vai ter acesso de administrador nessa imagem.");
-        if !Confirm::with_theme(&tema).with_prompt("Continuar mesmo assim?").default(false).interact()? {
-            return Err("cancelado: crie um usuário com sudo ou defina a senha do root".into());
+    // Na ISO, os usuários e a senha do root são criados por quem instala (no Calamares).
+    let (lista, senha_root) = match tipo {
+        Tipo::Iso => {
+            println!("\nNa ISO, quem instala cria os usuários no Calamares. Os usuários desta");
+            println!("máquina NÃO vão para a ISO; a sessão live usa o usuário \"liveuser\" (senha: live).");
+            (Vec::new(), None)
         }
-    }
+        Tipo::Template => perguntar_usuarios(&tema, &ambiente)?,
+    };
 
     // Bancos de dados ligados agora? Oferecemos parar durante a cópia.
     let ativos = servicos::ativos();
@@ -119,12 +242,42 @@ pub fn perguntar(distro: &Distro) -> Resultado<Plano> {
         if parar { ativos } else { Vec::new() }
     };
 
-    let compactar = Confirm::with_theme(&tema)
-        .with_prompt("Compactar a imagem no final? (arquivo menor, melhor para transportar; demora mais)")
-        .default(true)
-        .interact()?;
+    let (compactar, compressao) = match tipo {
+        Tipo::Template => {
+            let compactar = Confirm::with_theme(&tema)
+                .with_prompt("Compactar a imagem no final? (arquivo menor, melhor para transportar; demora mais)")
+                .default(true)
+                .interact()?;
+            let compressao = if compactar && ambiente.qemu_aceita_zstd {
+                let escolha = Select::with_theme(&tema)
+                    .with_prompt("Algoritmo de compressão")
+                    .items(&[
+                        "zstd: arquivo menor e a VM lê o disco mais rápido (QEMU 5.1+, de 2020)",
+                        "zlib: o clássico, para quem vai usar a imagem num QEMU antigo",
+                    ])
+                    .default(0)
+                    .interact()?;
+                if escolha == 0 { Compressao::Zstd } else { Compressao::Zlib }
+            } else {
+                Compressao::Zlib
+            };
+            (compactar, compressao)
+        }
+        Tipo::Iso => {
+            let escolha = Select::with_theme(&tema)
+                .with_prompt("Algoritmo de compressão da ISO")
+                .items(&[
+                    "xz: a menor ISO possível (liga um pouco mais devagar)",
+                    "zstd: ISO um pouco maior, mas a sessão live fica mais rápida",
+                ])
+                .default(0)
+                .interact()?;
+            (true, if escolha == 0 { Compressao::Xz } else { Compressao::Zstd })
+        }
+    };
 
     Ok(Plano {
+        tipo,
         imagem,
         tamanho_gb,
         usado_bytes,
@@ -134,8 +287,49 @@ pub fn perguntar(distro: &Distro) -> Resultado<Plano> {
         senha_root,
         senha_root_e_hash: false,
         compactar,
+        compressao,
         parar_servicos,
     })
+}
+
+/// Os usuários e o root do template (só o template pergunta isso).
+fn perguntar_usuarios(tema: &ColorfulTheme, ambiente: &Ambiente) -> Resultado<(Vec<Usuario>, Option<String>)> {
+    println!("\n--- Usuários da imagem ---");
+    println!("Os usuários atuais desta máquina serão REMOVIDOS da cópia.");
+    let lista = usuarios::perguntar(tema, &ambiente.passwd, &ambiente.group)?;
+
+    let bloquear_root = Confirm::with_theme(tema)
+        .with_prompt("Bloquear o login do root? (recomendado; admins usam sudo)")
+        .default(true)
+        .interact()?;
+    let senha_root = if bloquear_root {
+        None
+    } else {
+        Some(
+            Password::with_theme(tema)
+                .with_prompt("Senha do root")
+                .with_confirmation("Repita a senha", "As senhas não são iguais")
+                .interact()?,
+        )
+    };
+
+    if lista.iter().all(|u| !u.admin) && senha_root.is_none() {
+        println!("⚠ Atenção: ninguém vai ter acesso de administrador nessa imagem.");
+        if !Confirm::with_theme(tema).with_prompt("Continuar mesmo assim?").default(false).interact()? {
+            return Err("cancelado: crie um usuário com sudo ou defina a senha do root".into());
+        }
+    }
+    Ok((lista, senha_root))
+}
+
+/// A pasta de trabalho da ISO não pode existir: no fim ela é apagada inteira,
+/// e não queremos apagar nada que não fomos nós que criamos.
+fn conferir_pasta_conteudo(imagem: &str) -> Result<(), String> {
+    let pasta = pasta_conteudo(imagem);
+    if Path::new(&pasta).exists() {
+        return Err(format!("{} já existe (sobra de uma execução interrompida?). Apague a pasta ou escolha outro nome", pasta));
+    }
+    Ok(())
 }
 
 // ======================= 2. ARQUIVO .toml (modo automático) =======================
@@ -146,11 +340,13 @@ pub fn perguntar(distro: &Distro) -> Resultado<Plano> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Arquivo {
+    tipo: Option<Tipo>,
     imagem: String,
     tamanho_gb: Option<u64>,
     hostname: Option<String>,
     flatpak: Option<bool>,
     compactar: Option<bool>,
+    compressao: Option<Compressao>,
     parar_servicos: Option<bool>,
     sobrescrever: Option<bool>,
     senha_root: Option<String>,
@@ -173,29 +369,40 @@ struct UsuarioDoArquivo {
 pub fn do_arquivo(caminho: &str) -> Resultado<Plano> {
     let texto = std::fs::read_to_string(caminho).map_err(|e| format!("não consegui ler {}: {}", caminho, e))?;
     let arquivo: Arquivo = toml::from_str(&texto).map_err(|e| format!("erro no arquivo {}: {}", caminho, e))?;
-    let incluir_flatpak = arquivo.flatpak.unwrap_or(true);
-    let usado_bytes = copia::estimar_tamanho(incluir_flatpak);
-    montar_do_arquivo(arquivo, usado_bytes, &std::env::current_dir()?.to_string_lossy())
+    let ambiente = Ambiente::deste_computador(arquivo.flatpak.unwrap_or(true))?;
+    montar_do_arquivo(arquivo, &ambiente)
 }
 
 /// Confere tudo e monta o Plano. Fica separada de `do_arquivo` para os testes
-/// poderem informar o tamanho do sistema e a pasta atual.
-fn montar_do_arquivo(arquivo: Arquivo, usado_bytes: u64, pasta_atual: &str) -> Resultado<Plano> {
-    let imagem = Path::new(pasta_atual).join(&arquivo.imagem).to_string_lossy().to_string();
+/// poderem inventar o computador (`Ambiente`).
+fn montar_do_arquivo(arquivo: Arquivo, ambiente: &Ambiente) -> Resultado<Plano> {
+    let tipo = arquivo.tipo.unwrap_or(Tipo::Template);
+    let imagem = resolver_caminho(&arquivo.imagem, &ambiente.pasta_atual).map_err(|e| format!("imagem: {}", e))?;
     if Path::new(&imagem).exists() && !arquivo.sobrescrever.unwrap_or(false) {
         return Err(format!("{} já existe (use sobrescrever = true no arquivo)", imagem).into());
     }
+    if tipo == Tipo::Iso {
+        conferir_pasta_conteudo(&imagem)?;
+        // Na ISO, quem cria os usuários é quem instala, no Calamares.
+        if !arquivo.usuarios.is_empty() || arquivo.senha_root.is_some() || arquivo.senha_root_hash.is_some() {
+            return Err("tipo = \"iso\": tire os [[usuarios]] e a senha do root; na ISO quem instala cria os usuários no Calamares".into());
+        }
+    }
 
+    let usado_bytes = ambiente.usado_bytes;
     let usado_gb = em_gb(usado_bytes);
     let tamanho_gb = arquivo.tamanho_gb.unwrap_or(tamanho_sugerido(usado_gb));
     validar_tamanho(tamanho_gb, usado_gb)?;
 
-    let hostname = arquivo.hostname.unwrap_or_else(|| String::from("template"));
+    let padrao_hostname = if tipo == Tipo::Iso { "live" } else { "template" };
+    let hostname = arquivo.hostname.unwrap_or_else(|| String::from(padrao_hostname));
     validar_hostname(&hostname).map_err(|e| format!("hostname '{}': {}", hostname, e))?;
 
     let mut lista: Vec<Usuario> = Vec::new();
     for u in arquivo.usuarios {
-        usuarios::validar_nome(&u.nome).map_err(|e| format!("usuário '{}': {}", u.nome, e))?;
+        usuarios::validar_nome(&u.nome)
+            .and_then(|_| usuarios::nome_disponivel(&u.nome, &ambiente.passwd, &ambiente.group))
+            .map_err(|e| format!("usuário '{}': {}", u.nome, e))?;
         if lista.iter().any(|existente| existente.nome == u.nome) {
             return Err(format!("usuário '{}' aparece duas vezes", u.nome).into());
         }
@@ -224,13 +431,15 @@ fn montar_do_arquivo(arquivo: Arquivo, usado_bytes: u64, pasta_atual: &str) -> R
         }
     };
 
-    if lista.iter().all(|u| !u.admin) && senha_root.is_none() {
+    if tipo == Tipo::Template && lista.iter().all(|u| !u.admin) && senha_root.is_none() {
         return Err("ninguém teria acesso de administrador: marque admin = true em um usuário ou defina senha_root".into());
     }
 
+    let compressao = escolher_compressao(tipo, arquivo.compressao, ambiente.qemu_aceita_zstd)?;
     let parar_servicos = if arquivo.parar_servicos.unwrap_or(true) { servicos::ativos() } else { Vec::new() };
 
     Ok(Plano {
+        tipo,
         imagem,
         tamanho_gb,
         usado_bytes,
@@ -239,9 +448,26 @@ fn montar_do_arquivo(arquivo: Arquivo, usado_bytes: u64, pasta_atual: &str) -> R
         usuarios: lista,
         senha_root,
         senha_root_e_hash,
-        compactar: arquivo.compactar.unwrap_or(true),
+        // A ISO é sempre compactada (o squashfs é compactado por natureza).
+        compactar: tipo == Tipo::Iso || arquivo.compactar.unwrap_or(true),
+        compressao,
         parar_servicos,
     })
+}
+
+/// Confere se o algoritmo serve para o tipo e escolhe o padrão quando não foi informado.
+fn escolher_compressao(tipo: Tipo, pedida: Option<Compressao>, qemu_aceita_zstd: bool) -> Result<Compressao, String> {
+    match (tipo, pedida) {
+        (Tipo::Template, None) if qemu_aceita_zstd => Ok(Compressao::Zstd),
+        (Tipo::Template, None) => Ok(Compressao::Zlib),
+        (Tipo::Template, Some(Compressao::Zstd)) if !qemu_aceita_zstd => {
+            Err("compressao = \"zstd\" precisa do qemu-img 5.1 ou mais novo; use \"zlib\"".into())
+        }
+        (Tipo::Template, Some(Compressao::Xz)) => Err("o .qcow2 aceita compressao = \"zstd\" ou \"zlib\"".into()),
+        (Tipo::Iso, None) => Ok(Compressao::Xz),
+        (Tipo::Iso, Some(Compressao::Zlib)) => Err("a ISO aceita compressao = \"xz\" ou \"zstd\"".into()),
+        (_, Some(c)) => Ok(c),
+    }
 }
 
 /// Exatamente UMA das duas: `senha` (texto) ou `senha_hash` (já criptografada).
@@ -287,9 +513,27 @@ mod testes {
 
     const GB: u64 = 1_000_000_000;
 
-    fn ler_toml(texto: &str) -> Resultado<Plano> {
+    const PASSWD: &str = "root:x:0:0::/root:/bin/bash\ngdm:x:42:42::/var/lib/gdm:/sbin/nologin\ndaniel:x:1000:1000::/home/daniel:/bin/bash\n";
+    const GROUP: &str = "root:x:0:\nwheel:x:10:daniel\ndocker:x:975:daniel\ndaniel:x:1000:\n";
+
+    /// Um computador inventado: 5 GB usados, a pasta atual é `pasta`.
+    fn ambiente(pasta: &str) -> Ambiente {
+        Ambiente {
+            usado_bytes: 5 * GB,
+            pasta_atual: pasta.to_string(),
+            qemu_aceita_zstd: true,
+            passwd: PASSWD.into(),
+            group: GROUP.into(),
+        }
+    }
+
+    fn ler_toml_em(pasta: &str, texto: &str) -> Resultado<Plano> {
         let arquivo: Arquivo = toml::from_str(texto)?;
-        montar_do_arquivo(arquivo, 5 * GB, "/tmp/pasta-que-nao-tem-imagens")
+        montar_do_arquivo(arquivo, &ambiente(pasta))
+    }
+
+    fn ler_toml(texto: &str) -> Resultado<Plano> {
+        ler_toml_em(&raiz_de_teste(), texto)
     }
 
     #[test]
@@ -304,7 +548,8 @@ mod testes {
 
     #[test]
     fn arquivo_completo() {
-        let plano = ler_toml(
+        let pasta = raiz_de_teste();
+        let plano = ler_toml_em(&pasta,
             r#"
             imagem = "web.qcow2"
             tamanho_gb = 40
@@ -327,7 +572,8 @@ mod testes {
             "#,
         )
         .unwrap();
-        assert_eq!(plano.imagem, "/tmp/pasta-que-nao-tem-imagens/web.qcow2");
+        assert_eq!(plano.imagem, format!("{}/web.qcow2", pasta));
+        assert_eq!(plano.tipo, Tipo::Template);
         assert_eq!((plano.tamanho_gb, plano.hostname.as_str()), (40, "web-01"));
         assert!(!plano.incluir_flatpak && !plano.compactar && plano.parar_servicos.is_empty());
         assert_eq!(plano.senha_root.as_deref(), Some("$6$sal$abc"));
@@ -346,6 +592,7 @@ mod testes {
         assert_eq!(plano.hostname, "template");
         assert!(plano.incluir_flatpak && plano.compactar);
         assert!(plano.senha_root.is_none()); // root bloqueado
+        assert_eq!(plano.compressao, Compressao::Zstd);
     }
 
     #[test]
@@ -378,9 +625,9 @@ mod testes {
         criar(&pasta, "t.qcow2", "imagem antiga");
         let texto = "imagem = \"t.qcow2\"\nsenha_root = \"x\"\n";
         let arquivo: Arquivo = toml::from_str(texto).unwrap();
-        assert!(montar_do_arquivo(arquivo, GB, &pasta).is_err());
+        assert!(montar_do_arquivo(arquivo, &ambiente(&pasta)).is_err());
         let arquivo: Arquivo = toml::from_str(&format!("{}sobrescrever = true\n", texto)).unwrap();
-        assert!(montar_do_arquivo(arquivo, GB, &pasta).is_ok());
+        assert!(montar_do_arquivo(arquivo, &ambiente(&pasta)).is_ok());
     }
 
     #[test]
@@ -388,7 +635,89 @@ mod testes {
         // O arquivo de exemplo que acompanha o projeto tem que funcionar sempre.
         let texto = include_str!("../exemplo-plano.toml");
         let arquivo: Arquivo = toml::from_str(texto).unwrap();
-        assert!(montar_do_arquivo(arquivo, 5 * GB, "/tmp/pasta-que-nao-tem-imagens").is_ok());
+        assert!(montar_do_arquivo(arquivo, &ambiente(&raiz_de_teste())).is_ok());
+        let texto = include_str!("../exemplo-iso.toml");
+        let arquivo: Arquivo = toml::from_str(texto).unwrap();
+        assert_eq!(montar_do_arquivo(arquivo, &ambiente(&raiz_de_teste())).unwrap().tipo, Tipo::Iso);
+    }
+
+    #[test]
+    fn caminho_da_imagem_e_resolvido() {
+        let pasta = raiz_de_teste();
+        criar(&pasta, "sub/x", "");
+        // ".." e links viram o caminho real (é o que o rsync enxerga).
+        assert_eq!(resolver_caminho("sub/../t.qcow2", &pasta).unwrap(), format!("{}/t.qcow2", pasta));
+        std::os::unix::fs::symlink(format!("{}/sub", pasta), format!("{}/atalho", pasta)).unwrap();
+        assert_eq!(resolver_caminho("atalho/t.qcow2", &pasta).unwrap(), format!("{}/sub/t.qcow2", pasta));
+        assert_eq!(resolver_caminho("/caminho/absoluto/../", &pasta).unwrap_err(), "'/caminho/absoluto/../' não é um nome de arquivo (ex.: template.qcow2)");
+        for ruim in ["", "  ", "sub/", "..", "sub/.."] {
+            assert!(resolver_caminho(ruim, &pasta).unwrap_err().contains("não é um nome"), "{:?}", ruim);
+        }
+        assert!(resolver_caminho("sub", &pasta).unwrap_err().contains("é uma pasta"));
+        assert!(resolver_caminho("nao/existe/t.qcow2", &pasta).unwrap_err().contains("não existe"));
+    }
+
+    #[test]
+    fn iso_pelo_arquivo() {
+        let plano = ler_toml("tipo = \"iso\"\nimagem = \"x.iso\"\n").unwrap();
+        assert_eq!((plano.tipo, plano.compressao, plano.compactar), (Tipo::Iso, Compressao::Xz, true));
+        assert_eq!(plano.hostname, "live");
+        assert!(plano.usuarios.is_empty() && plano.senha_root.is_none());
+        let plano = ler_toml("tipo = \"iso\"\nimagem = \"x.iso\"\ncompressao = \"zstd\"\ncompactar = false\n").unwrap();
+        assert_eq!((plano.compressao, plano.compactar), (Compressao::Zstd, true));
+
+        for (texto, esperado) in [
+            ("tipo = \"iso\"\nimagem = \"x.iso\"\n[[usuarios]]\nnome = \"ana\"\nsenha = \"x\"\n", "Calamares"),
+            ("tipo = \"iso\"\nimagem = \"x.iso\"\nsenha_root = \"x\"\n", "Calamares"),
+            ("tipo = \"iso\"\nimagem = \"x.iso\"\ncompressao = \"zlib\"\n", "xz"),
+            ("tipo = \"pendrive\"\nimagem = \"x.iso\"\n", "tipo"),
+        ] {
+            let erro = ler_toml(texto).err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(erro.contains(esperado), "esperava '{}' no erro: {}", esperado, erro);
+        }
+    }
+
+    #[test]
+    fn iso_nao_reaproveita_pasta_de_trabalho() {
+        let pasta = raiz_de_teste();
+        criar(&pasta, "x.iso.conteudo/LiveOS/squashfs.img", "sobra");
+        let erro = ler_toml_em(&pasta, "tipo = \"iso\"\nimagem = \"x.iso\"\n").err().unwrap().to_string();
+        assert!(erro.contains("já existe"), "{}", erro);
+    }
+
+    #[test]
+    fn compressao_do_template() {
+        let base = "imagem = \"t.qcow2\"\nsenha_root = \"x\"\n";
+        assert_eq!(ler_toml(&format!("{}compressao = \"zlib\"\n", base)).unwrap().compressao, Compressao::Zlib);
+        assert!(ler_toml(&format!("{}compressao = \"xz\"\n", base)).err().unwrap().to_string().contains("zlib"));
+        // QEMU antigo: o padrão vira zlib, e pedir zstd é erro.
+        let pasta = raiz_de_teste();
+        let antigo = Ambiente { qemu_aceita_zstd: false, ..ambiente(&pasta) };
+        let plano = montar_do_arquivo(toml::from_str(base).unwrap(), &antigo).unwrap();
+        assert_eq!(plano.compressao, Compressao::Zlib);
+        let pedido = format!("{}compressao = \"zstd\"\n", base);
+        assert!(montar_do_arquivo(toml::from_str(&pedido).unwrap(), &antigo).is_err());
+    }
+
+    #[test]
+    fn versao_do_qemu() {
+        assert!(versao_aceita_zstd("qemu-img version 10.2.2 (qemu-10.2.2-1.fc44)\nCopyright"));
+        assert!(versao_aceita_zstd("qemu-img version 5.1.0\n"));
+        assert!(!versao_aceita_zstd("qemu-img version 5.0.1\n"));
+        assert!(!versao_aceita_zstd("qemu-img version 4.2.1 (Debian 1:4.2-3ubuntu6)\n"));
+        assert!(!versao_aceita_zstd(""));
+    }
+
+    #[test]
+    fn usuario_com_nome_de_conta_do_sistema() {
+        // gdm é conta do sistema; docker é um grupo: o useradd falharia lá no fim.
+        for (nome, esperado) in [("gdm", "conta do sistema"), ("docker", "grupo")] {
+            let texto = format!("imagem = \"t.qcow2\"\n[[usuarios]]\nnome = \"{}\"\nsenha = \"x\"\nadmin = true\n", nome);
+            let erro = ler_toml(&texto).err().unwrap().to_string();
+            assert!(erro.contains(esperado), "{}: {}", nome, erro);
+        }
+        // daniel é uma PESSOA: é removido da imagem, então o nome pode ser reusado.
+        assert!(ler_toml("imagem = \"t.qcow2\"\n[[usuarios]]\nnome = \"daniel\"\nsenha = \"x\"\nadmin = true\n").is_ok());
     }
 
     #[test]

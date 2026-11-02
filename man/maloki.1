@@ -1,9 +1,9 @@
 .\" -*- coding: UTF-8 -*-
 .\" Manual do maloki. Para ver sem instalar:  man ./man/maloki.1
-.TH MALOKI 1 "novembro de 2026" "maloki 0.1.0" "Comandos do Usuário"
+.TH MALOKI 1 "novembro de 2026" "maloki (em desenvolvimento)" "Comandos do Usuário"
 .
 .SH NOME
-maloki \- transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais
+maloki \- transforma o Linux que está rodando, sem os seus dados pessoais, num template para VMs (.qcow2) ou numa ISO instalável
 .
 .SH SINOPSE
 .SY "sudo maloki"
@@ -24,10 +24,19 @@ maloki \- transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os 
 .SH DESCRIÇÃO
 .B maloki
 faz uma "foto" do sistema Linux que está rodando e grava tudo num único
-arquivo de disco virtual no formato
-.BR qcow2 :
-um
-.IR template .
+arquivo, de um destes dois tipos:
+.TP
+.B template
+Um disco virtual no formato
+.B qcow2
+que liga direto numa VM, com os usuários que você escolher.
+.TP
+.B iso
+Uma ISO híbrida (DVD ou pendrive) com uma
+.B sessão live
+e o instalador gráfico
+.BR Calamares ,
+para instalar o sistema em qualquer computador.
 .PP
 Vão para a imagem os programas instalados, as configurações do sistema e os
 serviços.
@@ -38,9 +47,10 @@ vão: os arquivos pessoais
 os usuários existentes, senhas de Wi\-Fi, VPNs, chaves SSH do servidor, o
 .IR machine\-id ,
 logs, caches e configurações de IP fixo.
-No lugar dos usuários originais, são criados os usuários que você escolher.
+No template, no lugar dos usuários originais, são criados os usuários que você
+escolher; na ISO, quem instala cria os usuários no Calamares.
 .PP
-A imagem gerada liga em
+O template liga em
 .BR BIOS ,
 .B UEFI
 e
@@ -49,10 +59,16 @@ e usa rede automática (DHCP). Ela funciona no QEMU/KVM, no Proxmox e no
 libvirt e, depois de convertida com
 .BR qemu\-img (1),
 no VirtualBox e no VMware.
+A ISO liga em BIOS e UEFI (com o Secure Boot desligado); o sistema instalado
+por ela liga em BIOS, UEFI e UEFI com Secure Boot.
 .PP
-A imagem é criada na
+O arquivo é criado na
 .B pasta atual
 e o programa confere, antes de começar, se há espaço livre suficiente.
+Ele é gravado com o nome
+.IB arquivo .tmp
+e só troca para o nome final quando estiver pronto: se algo der errado, um
+arquivo antigo com o mesmo nome continua intacto.
 .
 .SH OPÇÕES
 .TP
@@ -74,9 +90,9 @@ Mostra um resumo do uso e sai.
 .
 .SH ETAPAS
 Depois das perguntas (ou da leitura do plano), do resumo e da confirmação, o
-programa executa 9 etapas:
+programa executa 9 etapas. As 5 primeiras são iguais nos dois tipos.
 .TP
-.B 1. Criar o disco virtual
+.B 1. Criar o disco de trabalho
 .BR qemu\-img " create"
 cria um arquivo "cru" (raw) temporário e o
 .BR losetup (8)
@@ -103,6 +119,9 @@ Apaga a identidade da máquina e os segredos (veja
 Monta
 .IR /dev ", " /proc ", " /sys " e " /run
 dentro da imagem.
+.PP
+No
+.BR template :
 .TP
 .B 6. Configurar o boot e a rede
 Gera
@@ -123,6 +142,43 @@ final (compactado, se pedido) e o raw é apagado.
 .TP
 .B 9. Conferir
 .BR qemu\-img " check" .
+.PP
+Na
+.BR iso :
+.TP
+.B 6. Preparar a sessão live e o instalador
+Remove os usuários "humanos", bloqueia o root, troca a rede por DHCP e cria o
+usuário
+.B liveuser
+(senha
+.BR live ,
+com sudo sem senha e login automático). Escreve a configuração do Calamares em
+.IR /etc/calamares ,
+o script
+.I /usr/libexec/maloki/pos\-instalacao
+e gera o initramfs live
+.RB ( dracut " com " dmsquash\-live
+no Fedora,
+.B live\-boot
+no Debian).
+.TP
+.B 7. Compactar o sistema
+.BR mksquashfs (1)
+com xz (a menor ISO) ou zstd.
+.TP
+.B 8. Gravar a ISO
+.BR grub\-mkrescue (1)
+monta uma ISO híbrida (BIOS e UEFI; DVD e pendrive).
+.TP
+.B 9. Conferir
+.BR xorriso (1)
+confere se a ISO tem o kernel, o initramfs, o menu e o squashfs.
+.PP
+No fim da instalação, o Calamares roda o
+.I pos\-instalacao
+dentro do sistema novo: ele remove o liveuser e tudo o que era só da sessão
+live, refaz o initramfs, aponta o boot para o disco novo e instala o GRUB
+(BIOS ou UEFI; no Fedora, o shim assinado para o Secure Boot).
 .
 .SH O QUE É REMOVIDO
 .IP \(bu 2
@@ -159,8 +215,14 @@ Formato TOML. Só
 .B imagem
 é obrigatório. Campos com nome desconhecido geram erro.
 .TP
+.BR tipo " = \(dqtemplate\(dq"
+.B \(dqtemplate\(dq
+(padrão) ou
+.BR \(dqiso\(dq .
+.TP
 .BR imagem " = \(dqtemplate.qcow2\(dq"
-Nome do arquivo gerado (relativo à pasta atual) ou caminho absoluto.
+Nome do arquivo gerado (relativo à pasta atual) ou caminho absoluto. A pasta
+precisa existir.
 .TP
 .BR tamanho_gb " = 40"
 Tamanho do disco da VM. Padrão: o usado + 30% + 5 GB (mínimo 20).
@@ -172,7 +234,18 @@ Nome da máquina.
 Incluir os Flatpaks do sistema.
 .TP
 .BR compactar " = true"
-Compactar a imagem no final.
+Compactar a imagem no final (a ISO é sempre compactada).
+.TP
+.BR compressao " = \(dqzstd\(dq"
+Template:
+.B zstd
+(padrão; precisa do QEMU 5.1 ou mais novo para ligar) ou
+.BR zlib .
+ISO:
+.B xz
+(padrão; a menor ISO) ou
+.B zstd
+(um pouco maior, sessão live mais rápida).
 .TP
 .BR parar_servicos " = true"
 Parar bancos de dados ligados durante a cópia.
@@ -197,18 +270,24 @@ e
 .B chave_ssh
 (a chave colada ou o caminho de um arquivo
 .IR .pub ).
+O nome não pode ser de uma conta ou grupo do sistema (ex.:
+.BR gdm ", " docker ).
 .PP
 Gere o hash da senha com
 .BR "openssl passwd \-6" .
-Pelo menos um usuário com
+No template, pelo menos um usuário com
 .B admin = true
-ou uma senha de root é obrigatório.
+ou uma senha de root é obrigatório. Na ISO,
+.B [[usuarios]]
+e a senha do root não são aceitos (quem instala cria os usuários).
 .
 .SH PROTEÇÕES
 .TP
 .B Ctrl+C
 Durante as etapas, o Ctrl+C não mata o programa na hora: ele desmonta tudo,
-desconecta o disco virtual, religa os serviços pausados e apaga a imagem incompleta.
+desconecta o disco virtual, religa os serviços pausados e apaga o arquivo incompleto
+.RI ( .tmp ).
+Um arquivo antigo com o nome final continua intacto.
 .TP
 .B Espaço livre
 Conferido antes de começar; se faltar, nada é criado.
@@ -225,10 +304,11 @@ qualquer outro caminho interrompe a execução.
 .SH STATUS DE SAÍDA
 .TP
 .B 0
-Imagem criada (ou ajuda exibida).
+Arquivo criado (ou ajuda exibida).
 .TP
 .B 1
-Erro; a mensagem diz o motivo. Nada fica montado nem conectado.
+Erro; a mensagem diz o motivo. Nada fica montado nem conectado, e um
+arquivo antigo com o mesmo nome não é tocado.
 .TP
 .B 2
 Opção inválida na linha de comando.
@@ -241,13 +321,31 @@ Trava que impede duas execuções simultâneas.
 .I /mnt/maloki\-PID
 Onde a imagem fica montada durante a criação.
 .TP
+.IB arquivo .raw ", " arquivo .tmp ", " arquivo .conteudo/
+Rascunhos ao lado do arquivo final (o disco de trabalho, o resultado ainda
+incompleto e os arquivos da ISO). São apagados no fim, dando certo ou não.
+.TP
 .I /etc/os\-release
 Usado para descobrir a família da distribuição.
 .
 .SH DISTRIBUIÇÕES
 Família Fedora (Fedora, Rocky, AlmaLinux, RHEL, CentOS) e família Debian
-(Debian, Ubuntu, Mint, Pop!_OS). Testado de ponta a ponta em Fedora 44 e
-Rocky 9; a lista atualizada está no README do projeto.
+(Debian, Ubuntu, Mint, Pop!_OS). A lista do que foi testado de ponta a ponta
+está no README do projeto.
+.PP
+Para a ISO, o sistema precisa de uma tela de login gráfica (GDM, SDDM ou
+LightDM) e destes pacotes:
+.PP
+.RS 4
+.EX
+# Fedora / Rocky
+dnf install calamares dracut\-live squashfs\-tools xorriso mtools \e
+  grub2\-tools\-extra grub2\-pc\-modules grub2\-efi\-x64\-modules
+# Debian / Ubuntu
+apt install calamares live\-boot squashfs\-tools xorriso mtools \e
+  grub\-common grub\-pc\-bin grub\-efi\-amd64\-bin
+.EE
+.RE
 .
 .SH EXEMPLOS
 Ver o passo a passo sem mudar nada:
@@ -271,6 +369,19 @@ Sem perguntas:
 .RS 4
 .EX
 sudo maloki \-\-plano servidor\-web.toml
+.EE
+.RE
+.PP
+Gerar uma ISO instalável sem perguntas e gravar num pendrive
+.RB ( cuidado :
+confira o nome do pendrive com
+.BR lsblk (8)):
+.PP
+.RS 4
+.EX
+printf \(aqtipo = "iso"\enimagem = "meu.iso"\en\(aq > iso.toml
+sudo maloki \-\-plano iso.toml
+sudo dd if=meu.iso of=/dev/sdX bs=4M status=progress oflag=sync
 .EE
 .RE
 .PP
@@ -313,6 +424,9 @@ o comando usado e a saída completa.
 .BR chroot (8),
 .BR grub\-install (8),
 .BR dracut (8),
-.BR useradd (8)
+.BR useradd (8),
+.BR mksquashfs (1),
+.BR grub\-mkrescue (1),
+.BR calamares (8)
 .PP
 Site: https://daniel-pereira-linux.github.io/maloki

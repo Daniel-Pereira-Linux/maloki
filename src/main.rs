@@ -1,5 +1,6 @@
-// maloki: transforma o Linux que está rodando numa imagem QEMU (.qcow2)
-// "template": sem os seus dados pessoais e com os usuários que você escolher.
+// maloki: transforma o Linux que está rodando, sem os seus dados pessoais, em:
+//   - um "template" para VMs (.qcow2), com os usuários que você escolher; ou
+//   - uma ISO instalável (sessão live + instalador Calamares).
 //
 // Uso:
 //   cargo build --release
@@ -15,6 +16,7 @@ mod disco;        // cria o .qcow2, particiona e monta
 mod distro;       // descobre qual Linux está rodando
 mod executor;     // roda comandos (ou só mostra, no modo simulação)
 mod limpeza;      // remove dados pessoais da cópia
+mod live;         // ISO instalável: sessão live + instalador Calamares
 mod plano;        // o que fazer: pelos menus ou por um arquivo .toml
 mod rede;         // troca IP fixo da máquina original por rede automática
 mod servicos;     // para bancos de dados durante a cópia
@@ -24,7 +26,8 @@ mod usuarios;     // menu e criação de usuários
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use disco::{Disco, PARTICAO_BOOT, PARTICAO_EFI, PARTICAO_RAIZ};
 use executor::Executor;
-use plano::Plano;
+use plano::{Compressao, Plano, Tipo};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
 
@@ -33,11 +36,12 @@ use std::process::Command;
 pub type Resultado<T> = Result<T, Box<dyn std::error::Error>>;
 
 const AJUDA: &str = "\
-maloki: transforma este Linux numa imagem QEMU (.qcow2) sem os seus dados.
+maloki: transforma este Linux, sem os seus dados, num template para VMs
+(.qcow2) ou numa ISO instalável (sessão live + instalador Calamares).
 
 Uso:
   sudo maloki                      pergunta tudo com menus
-  sudo maloki --plano ARQUIVO      sem perguntas (veja exemplo-plano.toml)
+  sudo maloki --plano ARQUIVO      sem perguntas (veja exemplo-plano.toml e exemplo-iso.toml)
   maloki --simular                 só mostra o passo a passo, sem mudar nada
   maloki --ajuda                   mostra esta ajuda
 ";
@@ -94,7 +98,7 @@ fn main() {
 fn executar(opcoes: &Opcoes) -> Resultado<()> {
     let simular = opcoes.simular;
     println!("==========================================");
-    println!("   maloki 🐧 → 📦 imagem QEMU");
+    println!("   maloki 🐧 → 📦 imagem QEMU ou 💿 ISO");
     println!("==========================================");
     if simular {
         println!("MODO SIMULAÇÃO: nada será alterado, só mostro os comandos.\n");
@@ -109,26 +113,7 @@ fn executar(opcoes: &Opcoes) -> Resultado<()> {
 
     let distro = distro::detectar()?;
     println!("Sistema atual: {} (família {:?})", distro.nome, distro.familia);
-
-    // Em quais modos (BIOS/UEFI) a imagem vai conseguir ligar.
-    let mut modos = boot::detectar_modos(distro.familia, "/");
-    if simular && !eh_root() && Path::new("/boot/efi").exists() {
-        // Sem root não dá para olhar dentro da partição EFI; na simulação supomos que tem.
-        modos.uefi = true;
-    }
-    if !modos.bios && !modos.uefi {
-        return Err("não achei o GRUB para BIOS nem para UEFI neste sistema".into());
-    }
-    println!("A imagem vai ligar em: {}", modos.descricao());
-
-    let faltando: Vec<&str> = distro.familia.ferramentas().into_iter().filter(|p| !existe_programa(p)).collect();
-    if !faltando.is_empty() {
-        let msg = format!("faltam programas: {}", faltando.join(", "));
-        if !simular {
-            return Err(msg.into());
-        }
-        println!("⚠ {}", msg);
-    }
+    avisar_ou_parar(simular, &programas_faltando(&distro.familia.ferramentas()), "")?;
 
     // ---------- O que fazer: menus ou arquivo ----------
     let plano = match &opcoes.arquivo_plano {
@@ -136,15 +121,50 @@ fn executar(opcoes: &Opcoes) -> Resultado<()> {
             println!("Lendo o plano de {} (modo automático, sem perguntas)...", arquivo);
             plano::do_arquivo(arquivo)?
         }
-        None => plano::perguntar(&distro)?,
+        None => {
+            // Os menus precisam de um teclado e uma tela de verdade.
+            if !std::io::stdin().is_terminal() {
+                return Err("os menus precisam de um terminal; para rodar sem perguntas use --plano ARQUIVO".into());
+            }
+            plano::perguntar(&distro)?
+        }
     };
+
+    // ---------- Em quais modos (BIOS/UEFI) o resultado vai ligar ----------
+    let modos = match plano.tipo {
+        Tipo::Template => {
+            let mut modos = boot::detectar_modos(distro.familia, "/");
+            if simular && !eh_root() && Path::new("/boot/efi").exists() {
+                // Sem root não dá para olhar dentro da partição EFI; na simulação supomos que tem.
+                modos.uefi = true;
+            }
+            modos
+        }
+        Tipo::Iso => {
+            let mut faltando = programas_faltando(&distro.familia.ferramentas_iso());
+            faltando.extend(live::o_que_falta(distro.familia, "/"));
+            let modos = live::modos_iso("/");
+            if modos.uefi && !existe_programa("mformat") {
+                faltando.push("mformat (pacote mtools, para a parte UEFI da ISO)".to_string());
+            }
+            avisar_ou_parar(simular, &faltando, distro.familia.pacotes_iso())?;
+            if modos.uefi {
+                println!("Obs.: a ISO liga com o Secure Boot DESLIGADO (o sistema instalado funciona com ele ligado).");
+            }
+            modos
+        }
+    };
+    if !modos.bios && !modos.uefi {
+        return Err("não achei o GRUB para BIOS nem para UEFI neste sistema".into());
+    }
+    println!("O resultado vai ligar em: {}", modos.descricao());
 
     // ---------- Espaço livre: não deixar o disco deste computador encher ----------
     let pasta_da_imagem = Path::new(&plano.imagem).parent().unwrap_or(Path::new("/")).to_string_lossy().to_string();
-    let necessario = copia::espaco_necessario(plano.usado_bytes, plano.compactar);
+    let necessario = copia::espaco_necessario(plano.usado_bytes, plano.tipo, plano.compactar);
     if let Some(livre) = copia::espaco_livre(&pasta_da_imagem) {
         let gb = |bytes: u64| bytes as f64 / 1e9;
-        println!("Espaço: {:.1} GB livres em {}, a imagem precisa de até {:.1} GB.", gb(livre), pasta_da_imagem, gb(necessario));
+        println!("Espaço: {:.1} GB livres em {}, preciso de até {:.1} GB.", gb(livre), pasta_da_imagem, gb(necessario));
         if livre < necessario {
             let msg = "espaço livre insuficiente: escolha outra pasta (ex.: um HD externo) ou não compacte";
             if !simular {
@@ -168,24 +188,15 @@ fn executar(opcoes: &Opcoes) -> Resultado<()> {
     cancelamento::instalar()?;
     let exec = Executor { simular };
 
-    // O disco é montado num arquivo "cru" temporário; no passo 8 ele vira o .qcow2.
+    // O disco é montado num arquivo "cru" temporário (.raw). O resultado é
+    // gravado num .tmp e só no FIM troca de nome: se algo der errado, uma
+    // imagem antiga com o mesmo nome continua intacta.
     let raw = arquivo_raw(&plano.imagem);
-    let resultado = criar_imagem(&exec, &plano, &distro, modos, &raw).and_then(|avisos| {
-        passo(8, if plano.compactar { "Gerando o .qcow2 compactado" } else { "Gerando o .qcow2" })?;
-        // -p mostra o progresso; -c compacta (o arquivo fica menor, demora mais).
-        let mut args = vec!["convert", "-p", "-f", "raw", "-O", "qcow2"];
-        if plano.compactar {
-            args.push("-c");
-        }
-        args.push(&raw);
-        args.push(&plano.imagem);
-        exec.rodar("qemu-img", &args)?;
-
-        passo(9, "Conferindo a imagem")?;
-        // O `qemu-img check` confere a estrutura interna do arquivo .qcow2.
-        exec.rodar("qemu-img", &["check", "-q", &plano.imagem])?;
-        Ok(avisos)
-    });
+    let temporario = arquivo_temporario(&plano.imagem);
+    let resultado = match plano.tipo {
+        Tipo::Template => gerar_template(&exec, &plano, &distro, modos, &raw, &temporario),
+        Tipo::Iso => gerar_iso(&exec, &plano, &distro, &raw, &temporario),
+    };
 
     // O .raw era só um rascunho: apagamos sempre, dando certo ou não.
     if !simular {
@@ -194,9 +205,10 @@ fn executar(opcoes: &Opcoes) -> Resultado<()> {
     let avisos = match resultado {
         Ok(avisos) => avisos,
         Err(erro) => {
-            // A imagem pela metade não serve para nada e só ocupa espaço.
+            // O resultado pela metade não serve para nada e só ocupa espaço.
+            // (Apagamos só o .tmp: uma imagem antiga com o nome final fica intacta.)
             if !simular {
-                let _ = std::fs::remove_file(&plano.imagem);
+                let _ = std::fs::remove_file(&temporario);
             }
             // Se foi Ctrl+C, o comando que estava rodando "falhou" porque foi
             // interrompido; a mensagem certa para a pessoa é a do cancelamento.
@@ -204,56 +216,114 @@ fn executar(opcoes: &Opcoes) -> Resultado<()> {
             return Err(erro);
         }
     };
+    exec.renomear(&temporario, &plano.imagem)?;
 
     // O arquivo foi criado pelo root; devolvemos para quem chamou o sudo,
-    // assim você consegue copiar/mover a imagem sem precisar de sudo.
+    // assim você consegue copiar/mover o arquivo sem precisar de sudo.
     if let Ok(usuario) = std::env::var("SUDO_USER") {
         exec.rodar("chown", &[&format!("{}:", usuario), &plano.imagem])?;
     }
 
-    println!("\n✅ Imagem pronta: {}", plano.imagem);
+    let pronta = if plano.tipo == Tipo::Iso { "ISO pronta" } else { "Imagem pronta" };
+    println!("\n✅ {}: {}", pronta, plano.imagem);
     if !avisos.is_empty() {
-        println!("\n⚠ Estas chaves privadas continuam na imagem (podem ser necessárias para algum");
-        println!("  serviço ligar). Se a imagem for compartilhada, avalie apagá-las ou trocá-las:");
+        println!("\n⚠ Estas chaves privadas continuam no resultado (podem ser necessárias para algum");
+        println!("  serviço ligar). Se ele for compartilhado, avalie apagá-las ou trocá-las:");
         for arquivo in &avisos {
             println!("     {}", arquivo);
         }
     }
-    println!("\nÉ um arquivo comum: copie para um HD externo, outro PC ou servidor (scp, rsync...).");
-    println!("Precisa em outro formato? O qemu-img converte:");
-    println!("   VirtualBox: qemu-img convert -O vdi  {} imagem.vdi", plano.imagem);
-    println!("   VMware:     qemu-img convert -O vmdk {} imagem.vmdk", plano.imagem);
-    println!("   Disco cru:  qemu-img convert -O raw  {} imagem.img", plano.imagem);
-    println!("\nA imagem liga em: {}. A rede é automática (DHCP).", modos.descricao());
-    println!("Se o sistema usa SELinux, no primeiro boot ele reetiqueta os arquivos");
-    println!("e a máquina reinicia sozinha uma vez (é normal).");
+    match plano.tipo {
+        Tipo::Template => mostrar_dicas_template(&plano, modos),
+        Tipo::Iso => mostrar_dicas_iso(&plano, modos),
+    }
+    Ok(())
+}
+
+/// Os programas da lista que não existem neste computador.
+fn programas_faltando(programas: &[&str]) -> Vec<String> {
+    programas.iter().filter(|p| !existe_programa(p)).map(|p| p.to_string()).collect()
+}
+
+/// Se falta algo: na simulação só avisa; de verdade, para com erro.
+/// `instalar` é o comando que resolve (ex.: "sudo dnf install ...").
+fn avisar_ou_parar(simular: bool, faltando: &[String], instalar: &str) -> Resultado<()> {
+    if faltando.is_empty() {
+        return Ok(());
+    }
+    let mut msg = format!("faltam: {}", faltando.join("; "));
+    if !instalar.is_empty() {
+        msg.push_str(&format!("\n   Para instalar: {}", instalar));
+    }
+    if !simular {
+        return Err(msg.into());
+    }
+    println!("⚠ {}", msg);
     Ok(())
 }
 
 fn mostrar_resumo(plano: &Plano, modos: boot::Modos) {
     println!("\n================ RESUMO ================");
-    println!("Imagem:      {} ({} GB)", plano.imagem, plano.tamanho_gb);
+    match plano.tipo {
+        Tipo::Template => println!("Gerar:       template para VMs (.qcow2), disco de {} GB", plano.tamanho_gb),
+        Tipo::Iso => println!("Gerar:       ISO instalável (sessão live + instalador Calamares)"),
+    }
+    println!("Arquivo:     {}", plano.imagem);
     println!("Hostname:    {}", plano.hostname);
-    println!("Boot:        {}", modos.descricao());
+    println!("Liga em:     {}", modos.descricao());
     println!("Rede:        automática (DHCP)");
     println!("Flatpaks:    {}", if plano.incluir_flatpak { "incluídos" } else { "fora" });
-    println!("Root:        {}", if plano.senha_root.is_some() { "com senha nova" } else { "bloqueado" });
+    if plano.compactar {
+        println!("Compressão:  {}", plano.compressao.nome());
+    } else {
+        println!("Compressão:  nenhuma");
+    }
     if !plano.parar_servicos.is_empty() {
         println!("Pausar:      {} (durante a cópia)", plano.parar_servicos.join(", "));
     }
-    println!("Usuários:    {}", plano.usuarios.len());
-    for u in &plano.usuarios {
-        println!("  - {}{}", u.nome, if u.admin { " (sudo)" } else { "" });
+    match plano.tipo {
+        Tipo::Template => {
+            println!("Root:        {}", if plano.senha_root.is_some() { "com senha nova" } else { "bloqueado" });
+            println!("Usuários:    {}", plano.usuarios.len());
+            for u in &plano.usuarios {
+                println!("  - {}{}", u.nome, if u.admin { " (sudo)" } else { "" });
+            }
+        }
+        Tipo::Iso => println!("Usuários:    criados por quem instala (sessão live: {} / senha {})", live::USUARIO_LIVE, live::SENHA_LIVE),
     }
-    println!("Seus dados (/home, Wi-Fi, VPN, chaves SSH, histórico, logs) NÃO vão para a imagem.");
+    println!("Seus dados (/home, Wi-Fi, VPN, chaves SSH, histórico, logs) NÃO vão para o arquivo.");
     println!("========================================");
 }
 
-/// Os passos que mexem no disco. Ficam numa função separada porque o `disco`
-/// precisa ser desmontado e solto (`finalizar`) antes de gerar o .qcow2.
-/// Devolve a lista de avisos (chaves privadas que ficaram na imagem).
-fn criar_imagem(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: boot::Modos, raw: &str) -> Resultado<Vec<String>> {
-    passo(1, "Criando o disco virtual")?;
+fn mostrar_dicas_template(plano: &Plano, modos: boot::Modos) {
+    println!("\nÉ um arquivo comum: copie para um HD externo, outro PC ou servidor (scp, rsync...).");
+    println!("Precisa em outro formato? O qemu-img converte:");
+    println!("   VirtualBox: qemu-img convert -O vdi  {} imagem.vdi", plano.imagem);
+    println!("   VMware:     qemu-img convert -O vmdk {} imagem.vmdk", plano.imagem);
+    println!("   Disco cru:  qemu-img convert -O raw  {} imagem.img", plano.imagem);
+    if plano.compactar && plano.compressao == Compressao::Zstd {
+        println!("(Compactada com zstd: use QEMU 5.1 ou mais novo para ligar.)");
+    }
+    println!("\nA imagem liga em: {}. A rede é automática (DHCP).", modos.descricao());
+    println!("Se o sistema usa SELinux, no primeiro boot ele reetiqueta os arquivos");
+    println!("e a máquina reinicia sozinha uma vez (é normal).");
+}
+
+fn mostrar_dicas_iso(plano: &Plano, modos: boot::Modos) {
+    println!("\nGravar num pendrive (CUIDADO: apaga o pendrive; confira o nome com `lsblk`):");
+    println!("   sudo dd if={} of=/dev/sdX bs=4M status=progress oflag=sync", plano.imagem);
+    println!("   (ou use o Fedora Media Writer, o balenaEtcher ou o Ventoy)");
+    println!("Testar numa VM antes:");
+    println!("   qemu-system-x86_64 -enable-kvm -m 4096 -cdrom {} -drive file=disco.qcow2,if=virtio", plano.imagem);
+    println!("   (crie o disco com: qemu-img create -f qcow2 disco.qcow2 40G)");
+    println!("\nA ISO liga em: {}, com o Secure Boot desligado.", modos.descricao());
+    println!("A sessão live entra sozinha como {} (senha: {}) e abre o instalador.", live::USUARIO_LIVE, live::SENHA_LIVE);
+}
+
+/// Os passos 1 a 5, iguais para o template e para a ISO: cria o disco de
+/// trabalho, copia o sistema, limpa os dados pessoais e prepara o chroot.
+fn copiar_e_limpar(exec: &Executor, plano: &Plano, raw: &str, temporario: &str) -> Resultado<Disco> {
+    passo(1, "Criando o disco de trabalho")?;
     let tamanho = format!("{}G", plano.tamanho_gb);
     // Um arquivo "esparso": diz ter o tamanho todo, mas só ocupa o que for gravado.
     exec.rodar("qemu-img", &["create", "-q", "-f", "raw", raw, &tamanho])?;
@@ -277,8 +347,9 @@ fn criar_imagem(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: 
         // dela liga os serviços de novo.
         let _pausa = servicos::pausar(exec, &plano.parar_servicos)?;
         exec.rodar("sync", &[])?; // grava no disco o que ainda está só na memória
-        // O .raw está crescendo enquanto copiamos: ele não pode entrar na cópia!
-        copia::copiar_sistema(exec, "/", &raiz, raw, plano.incluir_flatpak)?;
+        // Os arquivos que o maloki está criando não podem entrar na cópia!
+        let conteudo = plano::pasta_conteudo(&plano.imagem);
+        copia::copiar_sistema(exec, "/", &raiz, &[raw, temporario, &conteudo], plano.incluir_flatpak)?;
     }
 
     passo(4, "Removendo dados pessoais e identidade da máquina")?;
@@ -291,6 +362,40 @@ fn criar_imagem(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: 
     disco.montar(&["-t", "proc", "proc"], &format!("{}/proc", raiz))?;
     disco.montar(&["-t", "sysfs", "sys"], &format!("{}/sys", raiz))?;
     disco.montar(&["-t", "tmpfs", "tmpfs"], &format!("{}/run", raiz))?;
+    Ok(disco)
+}
+
+/// Template: configura o boot do disco, troca os usuários e gera o .qcow2.
+/// Devolve a lista de avisos (chaves privadas que ficaram na imagem).
+fn gerar_template(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: boot::Modos, raw: &str, temporario: &str) -> Resultado<Vec<String>> {
+    let avisos = criar_imagem(exec, plano, distro, modos, raw, temporario)?;
+
+    passo(8, if plano.compactar { "Gerando o .qcow2 compactado" } else { "Gerando o .qcow2" })?;
+    // -p mostra o progresso; -c compacta (o arquivo fica menor, demora mais).
+    let mut args = vec!["convert", "-p", "-f", "raw", "-O", "qcow2"];
+    if plano.compactar {
+        args.push("-c");
+        if plano.compressao == Compressao::Zstd {
+            // zstd: comprime tanto quanto o zlib (às vezes mais) e descomprime
+            // várias vezes mais rápido, então a VM lê o disco mais rápido.
+            args.extend(["-o", "compression_type=zstd"]);
+        }
+    }
+    args.push(raw);
+    args.push(temporario);
+    exec.rodar("qemu-img", &args)?;
+
+    passo(9, "Conferindo a imagem")?;
+    // O `qemu-img check` confere a estrutura interna do arquivo .qcow2.
+    exec.rodar("qemu-img", &["check", "-q", temporario])?;
+    Ok(avisos)
+}
+
+/// Os passos que mexem no disco do template. Ficam numa função separada porque
+/// o `disco` precisa ser desmontado e solto (`finalizar`) antes de gerar o .qcow2.
+fn criar_imagem(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: boot::Modos, raw: &str, temporario: &str) -> Resultado<Vec<String>> {
+    let disco = copiar_e_limpar(exec, plano, raw, temporario)?;
+    let raiz = disco.raiz.clone();
 
     passo(6, "Configurando o boot e a rede")?;
     // O blkid mostra o UUID ("RG") de cada partição recém-formatada.
@@ -318,9 +423,46 @@ fn criar_imagem(exec: &Executor, plano: &Plano, distro: &distro::Distro, modos: 
     Ok(avisos)
 }
 
+/// ISO: prepara a sessão live e o Calamares, compacta o sistema (squashfs) e
+/// grava a ISO. Os passos 1 a 5 são os mesmos do template.
+fn gerar_iso(exec: &Executor, plano: &Plano, distro: &distro::Distro, raw: &str, temporario: &str) -> Resultado<Vec<String>> {
+    let mut disco = copiar_e_limpar(exec, plano, raw, temporario)?;
+    let raiz = disco.raiz.clone();
+
+    passo(6, "Preparando a sessão live e o instalador (Calamares)")?;
+    // Os usuários desta máquina saem; quem instala cria os seus no Calamares.
+    limpeza::remover_usuarios(exec, &raiz)?;
+    usuarios::configurar_root(exec, &raiz, None, false)?;
+    rede::configurar(exec, &raiz)?;
+    // O Calamares exige de quem instala um disco do tamanho do sistema + folga.
+    let armazenamento_gb = plano.usado_bytes.div_ceil(1_000_000_000) + 5;
+    let live = live::preparar(exec, &raiz, distro, &plano.hostname, armazenamento_gb)?;
+    let avisos = if exec.simular { Vec::new() } else { limpeza::procurar_chaves_privadas(&raiz) };
+
+    passo(7, "Compactando o sistema (squashfs; é o passo mais demorado)")?;
+    // /dev, /proc, /sys e /run do chroot não podem entrar no squashfs:
+    // ficam montadas só as 3 partições (raiz, /boot e EFI).
+    disco.desmontar_ate(3)?;
+    let conteudo = live::PastaConteudo::criar(exec, &plano::pasta_conteudo(&plano.imagem))?;
+    live::montar_conteudo(exec, &raiz, distro.familia, &live, &conteudo.caminho, plano.compressao)?;
+    disco.finalizar()?;
+
+    passo(8, "Gravando a ISO (BIOS + UEFI, DVD e pendrive)")?;
+    live::gerar_iso(exec, distro.familia, &conteudo.caminho, &live.rotulo, temporario)?;
+
+    passo(9, "Conferindo a ISO")?;
+    live::conferir_iso(exec, distro.familia, temporario)?;
+    Ok(avisos)
+}
+
 /// O rascunho "cru" fica ao lado da imagem final: template.qcow2 -> template.qcow2.raw
 fn arquivo_raw(imagem: &str) -> String {
     format!("{}.raw", imagem)
+}
+
+/// O resultado é gravado aqui e só troca para o nome final quando estiver pronto.
+fn arquivo_temporario(imagem: &str) -> String {
+    format!("{}.tmp", imagem)
 }
 
 /// Mostra o título do passo. Antes, confere se a pessoa apertou Ctrl+C.
@@ -371,6 +513,7 @@ mod testes {
 
     fn plano_de_teste(compactar: bool) -> Plano {
         Plano {
+            tipo: Tipo::Template,
             imagem: "/tmp/teste-template.qcow2".into(),
             tamanho_gb: 30,
             usado_bytes: 5_000_000_000,
@@ -387,6 +530,7 @@ mod testes {
             senha_root: None,
             senha_root_e_hash: false,
             compactar,
+            compressao: Compressao::Zstd,
             parar_servicos: vec!["postgresql".into()],
         }
     }
@@ -401,12 +545,35 @@ mod testes {
             for (bios, uefi) in [(true, true), (true, false), (false, true)] {
                 let d = distro::Distro { nome: "Teste".into(), id: "teste".into(), familia };
                 let plano = plano_de_teste(true);
-                let avisos = criar_imagem(&exec, &plano, &d, boot::Modos { bios, uefi }, &arquivo_raw(&plano.imagem)).unwrap();
+                let (raw, tmp) = (arquivo_raw(&plano.imagem), arquivo_temporario(&plano.imagem));
+                let avisos = gerar_template(&exec, &plano, &d, boot::Modos { bios, uefi }, &raw, &tmp).unwrap();
                 assert!(avisos.is_empty());
             }
         }
         // A imagem não pode ter sido criada de verdade.
         assert!(!Path::new("/tmp/teste-template.qcow2").exists());
         assert!(!Path::new("/tmp/teste-template.qcow2.raw").exists());
+        assert!(!Path::new("/tmp/teste-template.qcow2.tmp").exists());
+    }
+
+    /// O mesmo para a ISO, nas duas famílias.
+    #[test]
+    fn pipeline_da_iso_em_simulacao() {
+        let exec = Executor { simular: true };
+        for familia in [distro::Familia::Fedora, distro::Familia::Debian] {
+            let d = distro::Distro { nome: "Teste".into(), id: "teste".into(), familia };
+            let plano = Plano {
+                tipo: Tipo::Iso,
+                imagem: "/tmp/teste-maloki.iso".into(),
+                usuarios: Vec::new(),
+                compressao: Compressao::Xz,
+                ..plano_de_teste(true)
+            };
+            let (raw, tmp) = (arquivo_raw(&plano.imagem), arquivo_temporario(&plano.imagem));
+            assert!(gerar_iso(&exec, &plano, &d, &raw, &tmp).unwrap().is_empty());
+        }
+        for sobra in ["/tmp/teste-maloki.iso", "/tmp/teste-maloki.iso.raw", "/tmp/teste-maloki.iso.tmp", "/tmp/teste-maloki.iso.conteudo"] {
+            assert!(!Path::new(sobra).exists(), "{} não podia existir", sobra);
+        }
     }
 }

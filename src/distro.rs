@@ -37,13 +37,31 @@ impl Familia {
         let mut lista = vec![
             "qemu-img", "losetup", "sfdisk", "mkfs.vfat",
             "mkfs.ext4", "e2fsck", "blockdev", "blkid", "rsync", "mount", "umount", "chroot", "useradd",
-            "userdel", "usermod", "chpasswd", "chage", "du",
+            "userdel", "usermod", "chage", "du",
         ];
         match self {
             Familia::Fedora => lista.extend(["dracut", "grub2-mkconfig"]),
             Familia::Debian => lista.extend(["update-initramfs", "grub-install", "update-grub"]),
         }
         lista
+    }
+
+    /// Programas a mais para gerar a ISO (no seu computador, fora da imagem).
+    pub fn ferramentas_iso(&self) -> Vec<&'static str> {
+        let mkrescue = match self {
+            Familia::Fedora => "grub2-mkrescue",
+            Familia::Debian => "grub-mkrescue",
+        };
+        vec!["mksquashfs", "xorriso", mkrescue, "calamares"]
+    }
+
+    /// Os pacotes que fornecem tudo o que a ISO precisa, para a mensagem de erro
+    /// já dizer o comando certo de instalar.
+    pub fn pacotes_iso(&self) -> &'static str {
+        match self {
+            Familia::Fedora => "sudo dnf install calamares dracut-live squashfs-tools xorriso mtools grub2-tools-extra grub2-pc-modules grub2-efi-x64-modules",
+            Familia::Debian => "sudo apt install calamares live-boot squashfs-tools xorriso mtools grub-common grub-pc-bin grub-efi-amd64-bin",
+        }
     }
 }
 

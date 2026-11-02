@@ -1,0 +1,21 @@
+# Exemplo de plano para gerar uma ISO instalável (sessão live + Calamares):
+#
+#   sudo ./maloki --plano exemplo-iso.toml
+#
+# Só "tipo" e "imagem" são obrigatórios. O que faltar usa o valor padrão
+# (entre parênteses). Na ISO não existem [[usuarios]] nem senha do root:
+# quem instala cria os usuários na tela do instalador.
+#
+# O sistema precisa ter uma tela de login gráfica (GDM, SDDM ou LightDM) e:
+#   Fedora/Rocky:  sudo dnf install calamares dracut-live squashfs-tools xorriso mtools \
+#                    grub2-tools-extra grub2-pc-modules grub2-efi-x64-modules
+#   Debian/Ubuntu: sudo apt install calamares live-boot squashfs-tools xorriso mtools \
+#                    grub-common grub-pc-bin grub-efi-amd64-bin
+
+tipo = "iso"
+imagem = "meu-sistema.iso"    # nome do arquivo gerado, na pasta atual
+hostname = "live"             # nome da máquina na sessão live ("live")
+flatpak = true                # incluir os apps Flatpak do sistema (true)
+compressao = "xz"             # "xz" = a menor ISO (padrão); "zstd" = liga mais rápido
+parar_servicos = true         # parar bancos de dados durante a cópia (true)
+sobrescrever = false          # substituir a ISO se ela já existir (false)

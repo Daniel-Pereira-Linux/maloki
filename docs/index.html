@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>maloki: seu Linux vira um template</title>
-<meta name="description" content="Transforme o Linux que está rodando numa imagem QEMU (.qcow2) portátil, sem os seus dados pessoais. BIOS, UEFI e Secure Boot.">
+<title>maloki: seu Linux vira template ou ISO</title>
+<meta name="description" content="Transforme o Linux que está rodando, sem os seus dados pessoais, num template .qcow2 para VMs ou numa ISO instalável com o Calamares. BIOS, UEFI e Secure Boot.">
 <meta property="og:title" content="maloki">
-<meta property="og:description" content="Seu Linux vira um template .qcow2, sem os seus dados pessoais.">
+<meta property="og:description" content="Seu Linux vira um template .qcow2 ou uma ISO instalável, sem os seus dados pessoais.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -158,9 +158,9 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; justify-content: space
 <header class="hero">
   <div class="wrap">
     <span class="selo"><b>v0.1.0</b> · software livre (MIT) · escrito em Rust</span>
-    <h1>Seu Linux vira um <em>template</em>.<br>Seus dados ficam com você.</h1>
-    <p class="sub">O <b>maloki</b> transforma o sistema que está rodando numa imagem <code>.qcow2</code> portátil, sem <code>/home</code>, sem senhas de Wi‑Fi, sem chaves, com os usuários que você escolher.</p>
-    <div class="chips"><span>BIOS</span><span>UEFI</span><span>Secure Boot</span><span>rede automática</span><span>modo simulação</span><span>Ctrl+C seguro</span></div>
+    <h1>Seu Linux vira um <em>template</em> ou uma <em>ISO</em>.<br>Seus dados ficam com você.</h1>
+    <p class="sub">O <b>maloki</b> transforma o sistema que está rodando numa imagem <code>.qcow2</code> para VMs, com os usuários que você escolher, ou numa <b>ISO instalável</b> com sessão live e o instalador <b>Calamares</b>. Sem <code>/home</code>, sem senhas de Wi‑Fi, sem chaves.</p>
+    <div class="chips"><span>template .qcow2</span><span>ISO + Calamares</span><span>BIOS</span><span>UEFI</span><span>Secure Boot</span><span>zstd / xz</span><span>modo simulação</span><span>Ctrl+C seguro</span></div>
 
     <div class="instalar">
       <div class="barra"><i></i><i></i><i></i><small>instalar com um comando</small></div>
@@ -209,9 +209,10 @@ Espaço: 412.3 GB livres, a imagem precisa de até 41.2 GB.</span>
       <div class="etapa"><div><b>Prepara o chroot</b><span>Para rodar comandos "dentro" da imagem</span></div></div>
       <div class="etapa"><div><b>Ajusta boot e rede</b><span>GRUB, initramfs com drivers de VM, IP fixo vira DHCP</span></div></div>
       <div class="etapa"><div><b>Troca os usuários</b><span>Remove os seus e cria os que você escolheu</span></div></div>
-      <div class="etapa"><div><b>Gera o .qcow2</b><span><code>qemu-img convert</code>, compactado se você quiser</span></div></div>
+      <div class="etapa"><div><b>Gera o .qcow2</b><span><code>qemu-img convert</code>, compactado com zstd ou zlib</span></div></div>
       <div class="etapa"><div><b>Confere</b><span><code>qemu-img check</code> na imagem pronta</span></div></div>
     </div>
+    <p class="lead" style="margin-top:22px">Na <b>ISO</b>, os 5 primeiros passos são os mesmos. Depois o maloki cria a sessão live (usuário <code>liveuser</code> com login automático), configura o Calamares inteiro, compacta o sistema num squashfs (xz ou zstd) e grava uma ISO híbrida com o <code>grub-mkrescue</code>: DVD ou pendrive, BIOS ou UEFI.</p>
   </div>
 </section>
 
@@ -246,15 +247,15 @@ Espaço: 412.3 GB livres, a imagem precisa de até 41.2 GB.</span>
 <section id="distros">
   <div class="wrap">
     <h2>Distribuições</h2>
-    <p class="lead">"Testado" quer dizer: clonamos uma máquina de verdade, ligamos a imagem em BIOS, UEFI e Secure Boot e conferimos mais de 20 itens por dentro.</p>
+    <p class="lead">"Testado" quer dizer: geramos o arquivo numa máquina de verdade, ligamos em BIOS, UEFI e Secure Boot (na ISO: o sistema instalado por ela) e conferimos dezenas de itens por dentro.</p>
     <div class="tabela"><table>
-      <thead><tr><th>Distribuição</th><th>Status</th><th>Detalhes</th></tr></thead>
+      <thead><tr><th>Distribuição</th><th>Template</th><th>ISO instalável</th></tr></thead>
       <tbody>
-        <tr><td><b>Fedora</b></td><td class="st ok">✓ testado</td><td>Fedora 44 (btrfs, SELinux ativo)</td></tr>
-        <tr><td><b>Rocky / AlmaLinux / RHEL / CentOS</b></td><td class="st ok">✓ testado</td><td>Rocky 9, com SELinux ativo</td></tr>
-        <tr><td><b>Debian</b></td><td class="st warn">◐ deve funcionar</td><td>Passou numa versão anterior. <a href="https://github.com/Daniel-Pereira-Linux/maloki/issues/new/choose">Conte como foi!</a></td></tr>
-        <tr><td><b>Ubuntu / Mint / Pop!_OS</b></td><td class="st warn">◐ deve funcionar</td><td>Mesma família do Debian. <a href="https://github.com/Daniel-Pereira-Linux/maloki/issues/new/choose">Conte como foi!</a></td></tr>
-        <tr><td>Arch, openSUSE, Alpine</td><td class="st no">✕ ainda não</td><td>O programa avisa e não faz nada. Quer ajudar? Veja o guia do código.</td></tr>
+        <tr><td><b>Fedora</b></td><td class="st ok">✓ testado (Fedora 44)</td><td class="st warn">◐ implementada, teste em andamento</td></tr>
+        <tr><td><b>Rocky / AlmaLinux / RHEL / CentOS</b></td><td class="st ok">✓ testado (Rocky 9)</td><td class="st warn">◐ não testada</td></tr>
+        <tr><td><b>Debian</b></td><td class="st warn">◐ deve funcionar</td><td class="st ok">✓ testada (Debian 13)</td></tr>
+        <tr><td><b>Ubuntu / Mint / Pop!_OS</b></td><td class="st warn">◐ deve funcionar</td><td class="st warn">◐ não testada</td></tr>
+        <tr><td>Arch, openSUSE, Alpine</td><td class="st no">✕ ainda não</td><td class="st no">✕ ainda não</td></tr>
       </tbody>
     </table></div>
   </div>
@@ -268,6 +269,7 @@ Espaço: 412.3 GB livres, a imagem precisa de até 41.2 GB.</span>
       <button role="tab" aria-selected="true" data-aba="a-simular">Simular</button>
       <button role="tab" aria-selected="false" data-aba="a-menus">Com menus</button>
       <button role="tab" aria-selected="false" data-aba="a-plano">Automático (--plano)</button>
+      <button role="tab" aria-selected="false" data-aba="a-iso">ISO instalável</button>
       <button role="tab" aria-selected="false" data-aba="a-usar">Usar a imagem</button>
     </div>
     <div class="painel" id="a-simular">
@@ -291,6 +293,20 @@ senha_hash = "$6$..."        # openssl passwd -6
 admin = true
 chave_ssh = "~/.ssh/id_ed25519.pub"</pre>
       <pre class="bloco">sudo maloki --plano meu-plano.toml</pre>
+    </div>
+    <div class="painel" id="a-iso" hidden>
+      <p>O sistema precisa de uma tela de login gráfica (GDM, SDDM ou LightDM) e destes pacotes:</p>
+      <pre class="bloco"># Fedora / Rocky
+sudo dnf install calamares dracut-live squashfs-tools xorriso mtools \
+     grub2-tools-extra grub2-pc-modules grub2-efi-x64-modules
+# Debian / Ubuntu
+sudo apt install calamares live-boot squashfs-tools xorriso mtools \
+     grub-common grub-pc-bin grub-efi-amd64-bin</pre>
+      <p>Gere (pelo menu, ou sem perguntas) e grave num pendrive. <b>Cuidado:</b> o <code>dd</code> apaga o pendrive; confira o nome com <code>lsblk</code>.</p>
+      <pre class="bloco">printf 'tipo = "iso"\nimagem = "meu.iso"\n' > iso.toml
+sudo maloki --plano iso.toml
+sudo dd if=meu.iso of=/dev/sdX bs=4M status=progress oflag=sync</pre>
+      <p>A ISO liga com o Secure Boot desligado; a sessão live entra sozinha (<code>liveuser</code> / senha <code>live</code>) e abre o instalador. O sistema instalado liga em BIOS, UEFI e Secure Boot.</p>
     </div>
     <div class="painel" id="a-usar" hidden>
       <p>Crie um disco "filho" (overlay) para não alterar o template, e ligue:</p>
@@ -316,6 +332,7 @@ qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
       <div class="card"><div class="icone">🛡️</div><h3>Trava de caminho</h3><p>Só apaga dentro de <code>/mnt/maloki-*</code>. Qualquer outro caminho para tudo.</p></div>
       <div class="card"><div class="icone">🔒</div><h3>Uma execução por vez</h3><p>Duas cópias juntas poderiam brigar pelo mesmo disco. Não deixamos.</p></div>
       <div class="card"><div class="icone">🗄️</div><h3>Bancos pausados</h3><p>PostgreSQL, MySQL, Redis, MongoDB param durante a cópia e voltam no fim.</p></div>
+      <div class="card"><div class="icone">🛟</div><h3>Troca só no fim</h3><p>Vai substituir uma imagem antiga? Ela só é trocada quando a nova fica pronta. Deu erro no meio? A antiga continua lá.</p></div>
     </div>
   </div>
 </section>
@@ -327,7 +344,7 @@ qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
     <div class="manual">
       <div class="cab"><span>MALOKI(1)</span><span>Comandos do Usuário</span><span>MALOKI(1)</span></div>
       <h3>NOME</h3>
-      <p><b>maloki</b> — transforma o Linux que está rodando numa imagem QEMU (.qcow2) sem os seus dados pessoais</p>
+      <p><b>maloki</b> — transforma o Linux que está rodando, sem os seus dados pessoais, num template para VMs (.qcow2) ou numa ISO instalável</p>
       <h3>SINOPSE</h3>
       <p class="mono"><b>sudo maloki</b><br><b>sudo maloki --plano</b> <i>arquivo.toml</i><br><b>maloki --simular</b> [<b>--plano</b> <i>arquivo.toml</i>]<br><b>maloki --ajuda</b></p>
       <h3>OPÇÕES</h3>
@@ -338,13 +355,15 @@ qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
       </dl>
       <h3>ARQUIVO DE PLANO</h3>
       <dl>
-        <dt>imagem = "template.qcow2"</dt><dd>Obrigatório. Nome do arquivo (relativo à pasta atual) ou caminho absoluto.</dd>
+        <dt>tipo = "template"</dt><dd><code>"template"</code> (padrão) ou <code>"iso"</code>.</dd>
+        <dt>imagem = "template.qcow2"</dt><dd>Obrigatório. Nome do arquivo (relativo à pasta atual) ou caminho absoluto. A pasta precisa existir.</dd>
         <dt>tamanho_gb = 40</dt><dd>Tamanho do disco da VM. Padrão: o usado + 30% + 5 GB (mínimo 20).</dd>
         <dt>hostname = "template"</dt><dd>Nome da máquina.</dd>
         <dt>flatpak · compactar · parar_servicos</dt><dd>Padrão <code>true</code>.</dd>
-        <dt>sobrescrever</dt><dd>Padrão <code>false</code>.</dd>
+        <dt>compressao</dt><dd>Template: <code>"zstd"</code> (padrão, QEMU 5.1+) ou <code>"zlib"</code>. ISO: <code>"xz"</code> (padrão, a menor) ou <code>"zstd"</code>.</dd>
+        <dt>sobrescrever</dt><dd>Padrão <code>false</code>. O arquivo antigo só é trocado quando o novo fica pronto.</dd>
         <dt>senha_root · senha_root_hash</dt><dd>Sem nenhum dos dois, o root fica bloqueado (recomendado).</dd>
-        <dt>[[usuarios]]</dt><dd><code>nome</code>, <code>senha</code> ou <code>senha_hash</code>, <code>admin</code>, <code>trocar_senha</code>, <code>chave_ssh</code>. Pelo menos um admin (ou senha de root) é obrigatório.</dd>
+        <dt>[[usuarios]]</dt><dd><code>nome</code>, <code>senha</code> ou <code>senha_hash</code>, <code>admin</code>, <code>trocar_senha</code>, <code>chave_ssh</code>. No template, pelo menos um admin (ou senha de root) é obrigatório. Na ISO, quem instala cria os usuários.</dd>
       </dl>
       <h3>STATUS DE SAÍDA</h3>
       <dl>
@@ -356,9 +375,10 @@ qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
       <dl>
         <dt>/run/maloki.lock</dt><dd>Trava contra duas execuções simultâneas.</dd>
         <dt>/mnt/maloki-PID</dt><dd>Onde a imagem fica montada durante a criação.</dd>
+        <dt>ARQUIVO.raw · ARQUIVO.tmp · ARQUIVO.conteudo/</dt><dd>Rascunhos ao lado do arquivo final; apagados no fim, dando certo ou não.</dd>
       </dl>
       <h3>VEJA TAMBÉM</h3>
-      <p class="mono">qemu-img(1), losetup(8), rsync(1), sfdisk(8), chroot(8), grub-install(8), dracut(8), useradd(8)</p>
+      <p class="mono">qemu-img(1), losetup(8), rsync(1), sfdisk(8), chroot(8), grub-install(8), dracut(8), useradd(8), mksquashfs(1), grub-mkrescue(1), calamares(8)</p>
       <p style="margin-top:18px"><a href="https://github.com/Daniel-Pereira-Linux/maloki/blob/main/man/maloki.1">Manpage completa (fonte) →</a></p>
     </div>
   </div>
@@ -373,6 +393,10 @@ qemu-img convert -O vmdk template.qcow2 template.vmdk</pre>
 sudo dnf install qemu-img rsync dosfstools grub2-pc-modules
 # Debian / Ubuntu
 sudo apt install qemu-utils rsync dosfstools grub-pc-bin grub-efi-amd64-bin</pre></details>
+    <details><summary>Template ou ISO: qual eu escolho?</summary>
+      <p><b>Template</b> para criar VMs prontas e iguais em segundos (QEMU, Proxmox, virt-manager). <b>ISO</b> para instalar o seu sistema em outros computadores: quem instala escolhe o disco, o usuário e a senha no Calamares.</p></details>
+    <details><summary>Dá para deixar o arquivo ainda menor?</summary>
+      <p>O maloki já usa a melhor compressão de cada formato: <b>zstd</b> no <code>.qcow2</code> e <b>xz</b> na ISO, e não guarda o espaço livre nem caches. O que mais pesa costuma ser os Flatpaks: se não precisar deles, use <code>flatpak = false</code>.</p></details>
     <details><summary>Minhas chaves de HTTPS vão para a imagem?</summary>
       <p>Sim. Um servidor web pode precisar delas para ligar, então o maloki <b>não apaga</b>, mas <b>lista</b> todas no final para você decidir. Se a imagem for compartilhada, troque essas chaves.</p></details>
     <details><summary>Quanto tempo demora?</summary>

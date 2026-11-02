@@ -1,7 +1,7 @@
 // Menu para criar os usuários da imagem, e os comandos que os criam.
 
 use crate::executor::Executor;
-use crate::limpeza::na_imagem;
+use crate::limpeza::{na_imagem, usuarios_humanos};
 use crate::Resultado;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use std::fs;
@@ -16,7 +16,8 @@ pub struct Usuario {
 }
 
 /// Pergunta, em loop, os dados de cada usuário até a pessoa dizer que acabou.
-pub fn perguntar(tema: &ColorfulTheme) -> Resultado<Vec<Usuario>> {
+/// `passwd` e `group` são os arquivos deste computador (para recusar nomes já usados).
+pub fn perguntar(tema: &ColorfulTheme, passwd: &str, group: &str) -> Resultado<Vec<Usuario>> {
     let mut usuarios: Vec<Usuario> = Vec::new();
 
     loop {
@@ -40,7 +41,8 @@ pub fn perguntar(tema: &ColorfulTheme) -> Resultado<Vec<Usuario>> {
                 if ja_usados.contains(texto) {
                     return Err("esse usuário já está na lista".into());
                 }
-                validar_nome(texto)
+                validar_nome(texto)?;
+                nome_disponivel(texto, passwd, group)
             })
             .interact_text()?;
 
@@ -86,6 +88,25 @@ pub fn validar_nome(nome: &str) -> Result<(), String> {
     let valido = nome.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
     if !valido {
         return Err("use só letras minúsculas, números, _ ou -".into());
+    }
+    Ok(())
+}
+
+/// O nome não pode ser de uma conta do sistema (gdm, sshd, postgres...) nem de
+/// um grupo que já existe (docker, libvirt...): o `useradd` falharia só no
+/// passo 7, depois de toda a cópia. As contas de PESSOAS não contam: elas são
+/// removidas da imagem antes, então o nome delas fica livre.
+pub fn nome_disponivel(nome: &str, passwd: &str, group: &str) -> Result<(), String> {
+    if usuarios_humanos(passwd).iter().any(|humano| humano == nome) {
+        return Ok(());
+    }
+    // A primeira coluna (antes do ":") dos dois arquivos é o nome.
+    let tem = |arquivo: &str| arquivo.lines().any(|linha| linha.split(':').next() == Some(nome));
+    if tem(passwd) {
+        return Err(format!("'{}' já é uma conta do sistema", nome));
+    }
+    if tem(group) {
+        return Err(format!("já existe um grupo '{}' no sistema; escolha outro nome", nome));
     }
     Ok(())
 }
@@ -208,7 +229,7 @@ pub fn configurar_root(exec: &Executor, raiz: &str, senha: Option<&str>, senha_e
 /// Por que não o `chpasswd`? No Fedora 44 ele falha dentro de outra raiz
 /// ("cannot open /etc/passwd"), tanto com `-R` quanto com `chroot`.
 /// O `usermod -R` funciona igual em todas as distros testadas.
-fn definir_senha(exec: &Executor, raiz: &str, nome: &str, senha: &str, senha_e_hash: bool) -> Resultado<()> {
+pub fn definir_senha(exec: &Executor, raiz: &str, nome: &str, senha: &str, senha_e_hash: bool) -> Resultado<()> {
     let hash = if senha_e_hash {
         senha.to_string()
     } else {

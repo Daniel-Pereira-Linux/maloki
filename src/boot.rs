@@ -203,14 +203,26 @@ pub fn nova_cmdline(uuid_raiz: &str, antiga: &str) -> String {
 /// Na primeira também trocamos os consoles; na _DEFAULT os consoles ficam,
 /// porque ali eles são escolha da distro, não da máquina.
 fn ajustar_default_grub(texto: &str) -> String {
+    filtrar_default_grub(texto, true)
+}
+
+/// Igual, mas sem ligar o console serial: para a ISO, que é instalada em
+/// computadores de verdade (lá o console é a tela, não uma porta serial).
+pub fn limpar_default_grub(texto: &str) -> String {
+    filtrar_default_grub(texto, false)
+}
+
+fn filtrar_default_grub(texto: &str, console_serial: bool) -> String {
     let mut saida = String::new();
     for linha in texto.lines() {
         // O valor pode vir com aspas duplas ou simples.
         let valor_de = |v: &str| v.trim().trim_matches(['"', '\'']).to_string();
         if let Some(valor) = linha.strip_prefix("GRUB_CMDLINE_LINUX=") {
             let mut partes = limpar_parametros(&valor_de(valor));
-            partes.push("console=tty0".into());
-            partes.push("console=ttyS0,115200".into());
+            if console_serial {
+                partes.push("console=tty0".into());
+                partes.push("console=ttyS0,115200".into());
+            }
             saida.push_str(&format!("GRUB_CMDLINE_LINUX=\"{}\"\n", partes.join(" ")));
         } else if let Some(valor) = linha.strip_prefix("GRUB_CMDLINE_LINUX_DEFAULT=") {
             let partes = filtrar_parametros(&valor_de(valor), false);
@@ -274,7 +286,7 @@ fn arquivos_bls(exec: &Executor, raiz: &str) -> Vec<String> {
 }
 
 /// Procura a pasta da distro (ex.: EFI/fedora ou EFI/rocky) que tem o grubx64.efi.
-fn achar_pasta_grub_efi(pasta_efi: &str) -> Option<std::path::PathBuf> {
+pub fn achar_pasta_grub_efi(pasta_efi: &str) -> Option<std::path::PathBuf> {
     let entradas = fs::read_dir(pasta_efi).ok()?; // `?` num Option: se for None, devolve None
     for entrada in entradas.flatten() {
         let nome = entrada.file_name().to_string_lossy().to_string();

@@ -1,14 +1,17 @@
-# Exemplo de plano para o modo automático (sem perguntas):
+# Exemplo de plano para gerar um TEMPLATE de VM (.qcow2) sem perguntas.
+# (Para uma ISO instalável com o Calamares, veja o exemplo-iso.toml.)
 #
 #   sudo ./maloki --plano exemplo-plano.toml
 #
 # Só "imagem" é obrigatório. O que faltar usa o valor padrão (entre parênteses).
 
+tipo = "template"             # "template" (padrão) ou "iso"
 imagem = "template.qcow2"     # nome do arquivo gerado, na pasta atual
 # tamanho_gb = 40             # tamanho do disco da VM (sugestão automática)
 hostname = "template"         # nome da máquina na VM ("template")
 flatpak = true                # incluir os apps Flatpak do sistema (true)
 compactar = true              # arquivo menor, melhor para transportar (true)
+compressao = "zstd"           # "zstd" (padrão; QEMU 5.1+) ou "zlib" (para QEMU antigo)
 parar_servicos = true         # parar bancos de dados durante a cópia (true)
 sobrescrever = false          # substituir a imagem se ela já existir (false)
 

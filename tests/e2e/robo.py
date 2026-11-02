@@ -18,7 +18,8 @@ comando = args[1:] if args[0] == "--" else args
 
 # Pergunta (um pedaço do texto) -> resposta. "\r" = Enter (aceita o padrão).
 respostas = [
-    ("Nome do arquivo da imagem", "\r"),
+    ("O que você quer gerar", "\r"),     # template (a 1ª opção)
+    ("Nome do arquivo", "\r"),
     ("Incluir os apps Flatpak", "\r"),
     ("Tamanho do disco da VM", "\r"),
     ("Nome da máquina (hostname)", hostname + "\r"),
@@ -33,6 +34,7 @@ respostas = [
     ("Bloquear o login do root", "\r"),
     ("Parar esses serviços", "\r"),  # só aparece se houver banco de dados ligado
     ("Compactar a imagem", "\r"),
+    ("Algoritmo de compressão", "\r"),  # zstd (a 1ª opção)
     ("Começar?", "\r"),
 ]
 

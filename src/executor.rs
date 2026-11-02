@@ -125,6 +125,31 @@ impl Executor {
         Ok(())
     }
 
+    /// Igual a `escrever`, para conteúdo que não é texto (ex.: uma imagem .png).
+    pub fn escrever_bytes(&self, caminho: &str, conteudo: &[u8]) -> Resultado<()> {
+        if self.simular {
+            println!("[simulação] escreveria {} ({} bytes)", caminho, conteudo.len());
+            return Ok(());
+        }
+        println!("  ✎ escrevendo {}", caminho);
+        if let Some(pasta) = std::path::Path::new(caminho).parent() {
+            fs::create_dir_all(pasta)?;
+        }
+        fs::write(caminho, conteudo)?;
+        Ok(())
+    }
+
+    /// Troca o nome de um arquivo. Se `destino` existir, ele é substituído
+    /// de uma vez só (nunca fica "meio velho, meio novo").
+    pub fn renomear(&self, origem: &str, destino: &str) -> Resultado<()> {
+        if self.simular {
+            println!("[simulação] renomearia {} -> {}", origem, destino);
+            return Ok(());
+        }
+        fs::rename(origem, destino).map_err(|e| format!("não consegui renomear {} para {}: {}", origem, destino, e))?;
+        Ok(())
+    }
+
     /// Apaga um arquivo ou uma pasta inteira. Se já não existir, tudo bem.
     pub fn apagar(&self, caminho: &str) -> Resultado<()> {
         if self.simular {
