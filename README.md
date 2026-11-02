@@ -111,35 +111,26 @@ pendrive, liga qualquer computador por ele, testa o sistema sem instalar (a
 
 ## Distribuições suportadas
 
+> ⚠️ **Esta versão (branch `desenvolvimento`) só foi validada no Debian 13**, e
+> só a **ISO instalável**. Todo o resto foi implementado e passa nos testes
+> rápidos (`cargo test`), mas **ainda não foi testado em VMs** com o código novo.
+> Para a versão testada nas outras distros, use a branch **`estavel`** (v0.1.0).
+
 | Distribuição | 📦 Template | 💿 ISO instalável |
 |---|---|---|
-| **Fedora** | ✅ testado de ponta a ponta: Fedora 44 (btrfs, SELinux ativo) | 🟡 implementada, teste de ponta a ponta ainda não concluído |
-| **Rocky / AlmaLinux / RHEL / CentOS** | ✅ testado de ponta a ponta: Rocky 9 (SELinux ativo) | 🟡 mesma família do Fedora; não testada |
-| **Debian** | 🟡 deve funcionar (passou numa versão anterior) | ✅ **testada de ponta a ponta: Debian 13** |
-| **Ubuntu / Mint / Pop!_OS** | 🟡 deve funcionar (mesma família do Debian) | 🟡 mesma família do Debian; não testada |
+| **Debian 13** | 🟡 não validado nesta versão | ✅ **validada de ponta a ponta** |
+| **Fedora** | 🟡 não validado nesta versão (passou na v0.1.0, Fedora 44) | 🟡 não validada |
+| **Rocky / AlmaLinux / RHEL / CentOS** | 🟡 não validado nesta versão (passou na v0.1.0, Rocky 9) | 🟡 não validada |
+| **Ubuntu / Mint / Pop!_OS** | 🟡 não validado | 🟡 não validada |
 | Arch, openSUSE, Alpine... | ❌ ainda não | ❌ ainda não |
 
-"Testado de ponta a ponta" significa:
-
-- **Template:** o programa clonou uma máquina de verdade, a imagem foi ligada em
-  **BIOS, UEFI e Secure Boot**, e mais de 20 itens foram conferidos por dentro, via SSH.
-- **ISO:** a ISO foi gerada numa máquina de verdade e ligada em **BIOS e UEFI**; a
-  sessão live (login automático, Calamares carregando todos os módulos) e a
-  instalação foram conferidas pela porta serial, e o sistema instalado ligou em
-  **BIOS, UEFI e Secure Boot** com mais de 18 itens conferidos via SSH.
+"Validada de ponta a ponta" (ISO do Debian 13): a ISO foi gerada numa máquina
+de verdade e ligada em **BIOS e UEFI**; a sessão live (login automático,
+Calamares carregando todos os módulos) e a instalação foram conferidas pela
+porta serial, e o sistema instalado ligou em **UEFI e Secure Boot** com 19 itens
+conferidos via SSH (em BIOS, também ligou).
 
 Testou numa combinação marcada com 🟡? [Conte como foi](#encontrou-um-bug), mesmo que tenha dado certo.
-
----|---|---|
-| **Fedora** | ✅ testado de ponta a ponta | Fedora 44 (btrfs, SELinux ativo) |
-| **Rocky / AlmaLinux / RHEL / CentOS** | ✅ testado de ponta a ponta | Rocky 9 (SELinux ativo) |
-| **Debian** | 🟡 deve funcionar | passou em uma versão anterior do maloki; [conte como foi](#encontrou-um-bug) |
-| **Ubuntu / Mint / Pop!_OS** | 🟡 deve funcionar (mesma família do Debian) | ainda não testado: [conte como foi](#encontrou-um-bug) |
-| Arch, openSUSE, Alpine... | ❌ ainda não | o programa avisa e não faz nada |
-
-"Testado de ponta a ponta" significa: o programa clonou uma máquina de verdade,
-a imagem foi ligada em **BIOS, UEFI e Secure Boot**, e mais de 20 itens foram
-conferidos por dentro, via SSH.
 
 ---
 

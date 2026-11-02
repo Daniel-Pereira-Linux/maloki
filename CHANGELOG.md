@@ -6,6 +6,10 @@ e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+> ⚠️ **Validado só no Debian 13** (a ISO instalável: sessão live em BIOS e UEFI;
+> sistema instalado em UEFI e Secure Boot). O template e as outras distros
+> passam nos testes rápidos, mas ainda não foram testados em VMs nesta versão.
+
 ### Adicionado
 - **ISO instalável** (`tipo = "iso"` ou a 2ª opção do menu): o sistema vira uma
   ISO híbrida (DVD/pendrive, BIOS e UEFI) com sessão live e o instalador gráfico
@@ -21,9 +25,7 @@ e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   instalam no disco como o Calamares faria e ligam o sistema instalado em BIOS,
   UEFI e Secure Boot.
 - Teste de ponta a ponta "imagem antiga + falha no meio" nas proteções.
-- **Testado de ponta a ponta:** a ISO do **Debian 13** (sessão live em BIOS e
-  UEFI; sistema instalado em BIOS, UEFI e Secure Boot). A ISO da família Fedora
-  está implementada, mas o teste de ponta a ponta ainda não foi concluído.
+
 
 ### Corrigido
 - **Uma falha no meio apagava a imagem antiga** quando `sobrescrever = true` (ou
