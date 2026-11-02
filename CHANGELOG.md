@@ -6,9 +6,11 @@ e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
-> ⚠️ **Validado só no Debian 13** (a ISO instalável: sessão live em BIOS e UEFI;
-> sistema instalado em UEFI e Secure Boot). O template e as outras distros
-> passam nos testes rápidos, mas ainda não foram testados em VMs nesta versão.
+> **Testado de ponta a ponta em VMs:** o template no Debian 13, Fedora 44,
+> Rocky 9 e Ubuntu 24.04 (BIOS, UEFI e Secure Boot); as proteções; a ISO do
+> Debian 13 (BIOS, UEFI e Secure Boot) e a do Fedora 44 em BIOS. Pendentes: a
+> ISO do Fedora em UEFI (corrigida), a do Ubuntu e a instalação clicando nas
+> telas do Calamares (nos testes, um script faz os mesmos passos dele).
 
 ### Adicionado
 - **ISO instalável** (`tipo = "iso"` ou a 2ª opção do menu): o sistema vira uma
@@ -48,6 +50,16 @@ e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Os menus fora de um terminal davam o erro cru "IO error: not a terminal";
   agora a mensagem sugere o `--plano`.
 - O `chpasswd` era exigido, mas não era mais usado.
+- **Ubuntu 24.04: o SSH não ligava no template.** O serviço que recria as chaves
+  do SSH no primeiro boot formava um ciclo de ordem com o `ssh.socket`, e o
+  systemd descartava o socket. Agora ele roda cedo no boot (`DefaultDependencies=no`).
+- **Ubuntu em UEFI: o template parava no `grub>`** ("no such device"). O GRUB
+  assinado (o do Secure Boot) lê o `EFI/ubuntu/grub.cfg`, e a cópia trazia o da
+  máquina original, apontando para o disco antigo. Agora o `grub-install` também
+  reescreve a pasta da distro na partição EFI.
+- **ISO do Fedora em UEFI: a cópia do sistema para o disco falhava.** O squashfs
+  levava a pasta `/boot/efi` com a etiqueta do SELinux, e a partição EFI (FAT32)
+  não aceita etiquetas. Agora a pasta inteira fica fora do squashfs.
 - Testes e2e: no Fedora 44, `cloud-init status` precisa de root; o teste
   esperava à toa até o limite de tempo.
 

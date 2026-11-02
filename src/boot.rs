@@ -87,7 +87,16 @@ pub fn configurar(exec: &Executor, raiz: &str, familia: Familia, uuids: &Uuids, 
                 exec.rodar("chroot", &[raiz, "grub-install", "--target=i386-pc", disco])?;
             }
             if modos.uefi {
-                // --removable instala em EFI/BOOT/BOOTX64.EFI, o caminho que todo
+                // 1º: a pasta da distro (EFI/ubuntu, EFI/debian...). O GRUB assinado
+                // (o do Secure Boot) SEMPRE lê o grub.cfg dessa pasta, e a cópia
+                // trouxe o da máquina original, apontando para o disco ANTIGO.
+                // (Bug real: o Ubuntu parava no "grub>" com "no such device".)
+                let pasta = format!("--bootloader-id={}", id_da_distro(raiz));
+                exec.rodar("chroot", &[
+                    raiz, "grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi",
+                    &pasta, "--no-nvram",
+                ])?;
+                // 2º: --removable instala em EFI/BOOT/BOOTX64.EFI, o caminho que todo
                 // firmware UEFI procura; --no-nvram não mexe no firmware do seu PC.
                 exec.rodar("chroot", &[
                     raiz, "grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi",
@@ -98,6 +107,18 @@ pub fn configurar(exec: &Executor, raiz: &str, familia: Familia, uuids: &Uuids, 
         }
     }
     Ok(())
+}
+
+/// O ID da distro da imagem (ID= no /etc/os-release: "ubuntu", "debian"...).
+/// É o nome da pasta dela na partição EFI. Na dúvida, "debian".
+fn id_da_distro(raiz: &str) -> String {
+    let texto = fs::read_to_string(format!("{}/etc/os-release", raiz.trim_end_matches('/'))).unwrap_or_default();
+    texto
+        .lines()
+        .find_map(|linha| linha.strip_prefix("ID="))
+        .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or_else(|| "debian".to_string())
 }
 
 /// A parte que só mexe em arquivos (sem chroot): dá para testar sem ser root.
@@ -137,14 +158,23 @@ fn ajustar_arquivos(exec: &Executor, raiz: &str, familia: Familia, uuids: &Uuids
 }
 
 // Um "unit file" do systemd. Lendo de cima para baixo:
-//   Before=        roda ANTES do servidor SSH
+//   DefaultDependencies=no  roda CEDO no boot, logo depois de montar os discos
+//                  (After=local-fs.target). Sem isto, o systemd põe o serviço
+//                  depois do basic.target, que já vem depois do ssh.socket:
+//                  um CICLO, e o systemd "resolve" descartando o ssh.socket.
+//                  No Ubuntu 24.04 (SSH ligado pelo socket) o SSH nem subia.
+//   Before=        roda ANTES do servidor SSH (pelo socket ou pelo serviço)
+//   Conflicts= / Before=shutdown.target  o que as dependências padrão fariam
 //   ConditionPathExists=!...  só roda se a chave NÃO existir (o "!" é "não")
 //   ExecStart=     o comando: ssh-keygen -A cria todas as chaves que faltam
 //   WantedBy=      liga junto com o sistema
 pub const SERVICO_CHAVES_SSH: &str = "\
 [Unit]
 Description=Gera as chaves do servidor SSH no primeiro boot (maloki)
-Before=ssh.service ssh.socket
+DefaultDependencies=no
+After=local-fs.target
+Before=sockets.target ssh.socket ssh.service shutdown.target
+Conflicts=shutdown.target
 ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
 
 [Service]
@@ -154,7 +184,6 @@ ExecStart=/usr/bin/ssh-keygen -A
 [Install]
 WantedBy=multi-user.target
 ";
-
 /// O /etc/fstab diz ao Linux quais partições montar e onde.
 pub fn fstab(uuids: &Uuids) -> String {
     format!(
@@ -596,7 +625,9 @@ mod testes {
         // Serviço que recria as chaves SSH (o Debian não faz isso sozinho).
         let servico = ler(&raiz, "etc/systemd/system/gerar-chaves-ssh.service");
         assert!(servico.contains("ExecStart=/usr/bin/ssh-keygen -A"));
-        assert!(servico.contains("Before=ssh.service"));
+        // Roda antes do SSH, seja ele ligado pelo serviço (Debian) ou pelo socket (Ubuntu).
+        let antes = servico.lines().find(|l| l.starts_with("Before=")).unwrap_or("");
+        assert!(antes.split(['=', ' ']).any(|u| u == "ssh.service") && antes.contains("ssh.socket"), "{}", antes);
         let grub = ler(&raiz, "etc/default/grub");
         assert!(grub.contains("GRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\""));
         assert!(grub.contains("GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\""));
@@ -693,6 +724,13 @@ mod testes {
             }
         }
         assert_eq!(secoes, ["[Unit]", "[Service]", "[Install]"]);
+        // Quem roda antes de um socket NÃO pode ter as dependências padrão:
+        // elas o colocam depois do basic.target, que vem depois dos sockets (ciclo).
+        // (Bug real: no Ubuntu 24.04 o systemd descartava o ssh.socket.)
+        if SERVICO_CHAVES_SSH.contains("ssh.socket") {
+            assert!(SERVICO_CHAVES_SSH.contains("DefaultDependencies=no"));
+            assert!(SERVICO_CHAVES_SSH.contains("Before=sockets.target"));
+        }
         // Se o systemd-analyze existir neste PC, ele confere o arquivo de verdade.
         let raiz = raiz_de_teste();
         criar(&raiz, "gerar-chaves-ssh.service", SERVICO_CHAVES_SSH);
@@ -703,6 +741,19 @@ mod testes {
             let erros = String::from_utf8_lossy(&saida.stderr);
             assert!(!erros.contains("gerar-chaves-ssh.service:"), "{}", erros);
         }
+    }
+
+    #[test]
+    fn pasta_efi_da_distro() {
+        let raiz = raiz_de_teste();
+        assert_eq!(id_da_distro(&raiz), "debian"); // sem os-release: o padrão
+        criar(&raiz, "etc/os-release", "NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\n");
+        assert_eq!(id_da_distro(&raiz), "ubuntu");
+        criar(&raiz, "etc/os-release", "ID=\"linuxmint\"\n");
+        assert_eq!(id_da_distro(&raiz), "linuxmint");
+        // Nada de caminhos esquisitos no --bootloader-id.
+        criar(&raiz, "etc/os-release", "ID=../../x\n");
+        assert_eq!(id_da_distro(&raiz), "debian");
     }
 
     // ---------- Fuzz: 100 mil linhas de boot aleatórias ----------

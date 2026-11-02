@@ -687,6 +687,11 @@ pub fn montar_conteudo(exec: &Executor, raiz: &str, familia: Familia, live: &Liv
 /// -b 1M      blocos grandes: comprime bem mais (é o que as distros usam)
 /// -noappend  sempre um arquivo novo
 /// -e ...     fica de fora: a partição EFI (o pos-instalacao cuida dela) e o /tmp
+///
+/// A pasta boot/efi sai INTEIRA, não só o que tem dentro: na instalação em UEFI
+/// ela vira o ponto de montagem de uma partição FAT32, que não aceita dono,
+/// permissões nem a etiqueta do SELinux. Copiar a pasta para lá dava erro
+/// (bug real na ISO do Fedora). O Calamares cria a pasta ao montar a partição.
 fn argumentos_mksquashfs(raiz: &str, destino: &str, compressao: Compressao) -> Vec<String> {
     let mut args: Vec<String> = vec![raiz.into(), destino.into(), "-noappend".into(), "-b".into(), "1M".into()];
     match compressao {
@@ -696,7 +701,7 @@ fn argumentos_mksquashfs(raiz: &str, destino: &str, compressao: Compressao) -> V
         Compressao::Zstd | Compressao::Zlib => args.extend(["-comp", "zstd", "-Xcompression-level", "19"].map(String::from)),
     }
     // -e precisa ser o ÚLTIMO: tudo depois dele é lista de exclusão.
-    args.extend(["-wildcards", "-e", "boot/efi/*", "tmp/*"].map(String::from));
+    args.extend(["-wildcards", "-e", "boot/efi", "tmp/*"].map(String::from));
     args
 }
 
@@ -930,7 +935,7 @@ mod testes {
     fn compressao_do_squashfs() {
         let xz = argumentos_mksquashfs("/mnt/maloki-1", "/x/squashfs.img", Compressao::Xz).join(" ");
         assert!(xz.starts_with("/mnt/maloki-1 /x/squashfs.img -noappend -b 1M -comp xz -Xbcj x86"));
-        assert!(xz.ends_with("-e boot/efi/* tmp/*"));
+        assert!(xz.ends_with("-e boot/efi tmp/*"));
         let zstd = argumentos_mksquashfs("/r", "/s", Compressao::Zstd).join(" ");
         assert!(zstd.contains("-comp zstd -Xcompression-level 19"));
     }

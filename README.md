@@ -111,24 +111,28 @@ pendrive, liga qualquer computador por ele, testa o sistema sem instalar (a
 
 ## Distribuições suportadas
 
-> ⚠️ **Esta versão (branch `desenvolvimento`) só foi validada no Debian 13**, e
-> só a **ISO instalável**. Todo o resto foi implementado e passa nos testes
-> rápidos (`cargo test`), mas **ainda não foi testado em VMs** com o código novo.
-> Para a versão testada nas outras distros, use a branch **`estavel`** (v0.1.0).
-
 | Distribuição | 📦 Template | 💿 ISO instalável |
 |---|---|---|
-| **Debian 13** | 🟡 não validado nesta versão | ✅ **validada de ponta a ponta** |
-| **Fedora** | 🟡 não validado nesta versão (passou na v0.1.0, Fedora 44) | 🟡 não validada |
-| **Rocky / AlmaLinux / RHEL / CentOS** | 🟡 não validado nesta versão (passou na v0.1.0, Rocky 9) | 🟡 não validada |
-| **Ubuntu / Mint / Pop!_OS** | 🟡 não validado | 🟡 não validada |
+| **Debian 13** | ✅ BIOS, UEFI e Secure Boot | ✅ BIOS, UEFI e Secure Boot |
+| **Fedora 44** | ✅ BIOS, UEFI e Secure Boot | ✅ BIOS · 🟡 UEFI: corrigido, aguardando novo teste |
+| **Rocky 9** (AlmaLinux / RHEL / CentOS) | ✅ BIOS, UEFI e Secure Boot | 🟡 não testada |
+| **Ubuntu 24.04** (Mint / Pop!_OS) | ✅ BIOS, UEFI e Secure Boot | 🟡 em teste |
 | Arch, openSUSE, Alpine... | ❌ ainda não | ❌ ainda não |
 
-"Validada de ponta a ponta" (ISO do Debian 13): a ISO foi gerada numa máquina
-de verdade e ligada em **BIOS e UEFI**; a sessão live (login automático,
-Calamares carregando todos os módulos) e a instalação foram conferidas pela
-porta serial, e o sistema instalado ligou em **UEFI e Secure Boot** com 19 itens
-conferidos via SSH (em BIOS, também ligou).
+**O que "✅" quer dizer:**
+
+- **Template:** o maloki clonou uma máquina de verdade (com IP fixo, VPN, regra
+  de sudo e chave TLS de propósito), e a imagem foi ligada em **BIOS, UEFI e
+  Secure Boot**, com 23 ou 24 itens conferidos por dentro, via SSH.
+- **ISO:** a ISO foi gerada numa máquina de verdade e ligada; a sessão live
+  (login automático, Calamares carregando todos os módulos) e a instalação foram
+  conferidas, e o sistema instalado ligou com 19 itens conferidos via SSH.
+
+> ⚠️ **Sobre o Calamares:** nos testes da ISO, a instalação foi feita por um
+> script que faz **os mesmos passos** do Calamares, com a configuração que o
+> maloki escreve (particionar, copiar o sistema, criar o usuário e rodar o
+> pós-instalação do maloki). A instalação **clicando nas telas do Calamares**
+> ainda não foi testada de ponta a ponta.
 
 Testou numa combinação marcada com 🟡? [Conte como foi](#encontrou-um-bug), mesmo que tenha dado certo.
 

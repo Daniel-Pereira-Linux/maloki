@@ -85,11 +85,12 @@ scp_vm() { scp "${SSH_OPCOES[@]}" "$@"; }
 
 # Nunca liga uma VM se o computador estiver com pouca memória
 # (aprendemos isso do jeito difícil: o Linux mata VMs quando a memória acaba).
+# memoria_ok MB: só liga uma VM de MB megabytes se sobrar mais 1 GB de folga.
 memoria_ok() {
-  local livre_mb
+  local precisa=$(( ${1:-2048} + 1024 )) livre_mb
   livre_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-  if [ "$livre_mb" -lt 3500 ]; then
-    echo "Pouca memória livre (${livre_mb} MB); não vou ligar outra VM."; return 1
+  if [ "$livre_mb" -lt "$precisa" ]; then
+    echo "Pouca memória livre (${livre_mb} MB, preciso de ${precisa}); não vou ligar outra VM."; return 1
   fi
 }
 
@@ -108,8 +109,9 @@ baixar_base() {
 # IP fixo, VPN, regra de sudo para o daniel e uma chave TLS.
 # extras: pacotes a mais (os da ISO); com eles, o disco e o tempo de espera crescem.
 ligar_original() {
-  local distro=$1 base=$2 extras=${3:-}
-  memoria_ok || return 1
+  local distro=$1 base=$2 extras=${3:-} memoria=2048
+  [ -n "$extras" ] && memoria=2560
+  memoria_ok $memoria || return 1
   local seed="$TRABALHO/seed-$distro"
   rm -rf "$seed"; mkdir -p "$seed"
   cat > "$seed/user-data" <<EOF
@@ -139,7 +141,7 @@ ethernets:
 EOF
   genisoimage -quiet -output "$seed.iso" -volid cidata -joliet -rock "$seed"/*
   qemu-img create -q -f qcow2 -b "$base" -F qcow2 "original-$distro.qcow2" 40G
-  qemu-system-x86_64 -name "original-$distro" -enable-kvm -cpu host -smp 4 -m 3072 \
+  qemu-system-x86_64 -name "original-$distro" -enable-kvm -cpu host -smp 4 -m $memoria \
     -drive file="original-$distro.qcow2",if=virtio -drive file="$seed.iso",if=virtio,media=cdrom,readonly=on \
     -nic user,model=virtio-net-pci,mac=$MAC_ORIGINAL,hostfwd=tcp:127.0.0.1:$PORTA_ORIGINAL-:22 \
     -display none -serial file:"original-$distro.console" -daemonize -pidfile "original-$distro.pid"
@@ -313,7 +315,7 @@ testar_protecoes() {
 # serial e instala no disco (como o Calamares). modo: bios | uefi
 testar_iso_modo() {
   local distro=$1 modo=$2 iso="$TRABALHO/maloki-$1.iso"
-  memoria_ok || return 1
+  memoria_ok 2560 || return 1
   local nome="iso-$distro-$modo" firmware=()
   rm -f "$nome.disco.qcow2" "$nome.sock"
   qemu-img create -q -f qcow2 "$nome.disco.qcow2" 25G
@@ -321,7 +323,7 @@ testar_iso_modo() {
     cp "$OVMF/OVMF_VARS.fd" "$nome-VARS.fd"
     firmware=(-drive if=pflash,format=raw,readonly=on,file=$OVMF/OVMF_CODE.fd -drive if=pflash,format=raw,file="$nome-VARS.fd")
   fi
-  qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -m 4096 -smp 4 "${firmware[@]}" \
+  qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -m 2560 -smp 4 "${firmware[@]}" \
     -drive file="$nome.disco.qcow2",if=virtio \
     -drive file="$iso",media=cdrom,readonly=on,if=none,id=live -device ide-cd,drive=live,bus=ide.0,bootindex=0 \
     -drive file="$TRABALHO/cd-testes.iso",media=cdrom,readonly=on,if=none,id=testes -device ide-cd,drive=testes,bus=ide.1 \
@@ -419,6 +421,18 @@ testar_iso() {
 }
 
 # ---------------- Início ----------------
+
+# Se o teste for interrompido (Ctrl+C, kill...), nenhuma VM pode ficar ligada:
+# uma VM "fantasma" segura a porta SSH e engana o teste seguinte.
+# (Aprendemos isso do jeito difícil: o teste conversou com a VM errada.)
+desligar_tudo() { for f in "$TRABALHO"/*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; rm -f "$f"; done; }
+trap desligar_tudo EXIT
+trap 'exit 130' INT TERM
+for porta in $PORTA_ORIGINAL $PORTA_TESTE; do
+  if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$porta "; then
+    echo "A porta $porta já está em uso (sobrou uma VM de outro teste?). Desligue-a antes."; exit 1
+  fi
+done
 
 echo "Compilando a versão estática (roda em qualquer distro)..."
 ( cd "$PROJETO" && cargo build --quiet --release --target x86_64-unknown-linux-musl ) || exit 1
